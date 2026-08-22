@@ -126,10 +126,11 @@ const packet = Anamnesis.buildMemoryReadPacket({
 | [集成](docs/INTEGRATION.md) | 把 Mnemosyne 接入宿主 runtime |
 | [隐私模型](docs/PRIVACY-MODEL.md) | 理解仓库、运行时、audit 与网络边界 |
 | [状态](docs/STATUS.md) | 查看已实现能力与对应测试覆盖 |
+| [许可证说明](docs/LICENSING.md) | 通俗理解许可证边界 |
 
 ## 许可证
 
-Mnemosyne 采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，以 source-available、仅限非商业用途的方式发布。依照许可证，可以个人使用、学习、修改和非商业分享；商业使用需要另行许可。[许可证说明](LICENSE-NOTES.md)提供通俗解释。
+Mnemosyne 采用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)，以 source-available、仅限非商业用途的方式发布。依照许可证，可以个人使用、学习、修改和非商业分享；商业使用需要另行许可。[许可证说明](docs/LICENSING.md)提供通俗解释。
 
 许可人与维护者为 **Gwendolen**（GitHub：`@Gwendolenmave`）。
 
