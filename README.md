@@ -4,21 +4,61 @@
 
 [简体中文](README.zh-CN.md)
 
-**Long-term memory that helps a personal AI remember the right thing, for the right reason, at the right moment.**
+**Long-term memory for personal AI that remembers the right thing, for the right reason, at the right moment.**
 
-Mnemosyne is the governed long-term memory system built for [Delos](https://github.com/Gwendolenmave/delos). It turns conversation evidence into durable memory, preserves how facts change over time, and recalls each memory only inside the context where it is eligible.
+Most “AI memory” demos solve one problem: *find something similar to the current message*. Real long-term memory has harder problems.
 
-Mnemosyne is local-first, model-neutral, and can also be embedded in other personal AI runtimes.
+What if an old fact is no longer true? What if a memory belongs only to one project or fictional universe? What if something was mentioned but never authorized as a durable fact? What if the system remembers the right sentence in the wrong relationship or scene?
 
-## What Mnemosyne does
+Mnemosyne is built around those questions.
 
-- **Governed memory writes.** Evidence becomes durable memory only through an explicit confirmation or policy path.
-- **Historical truth.** Revision, supersession, expiry, revocation, sealing, and retrieval disablement remain distinct lifecycle events instead of overwriting the past.
-- **Context-aware recall.** Scope, relationship or project context, AU/realm, sensitivity, conflict, expiry, and token budget are checked before ranking.
-- **Durable recovery.** The canonical memory history is append-only; rebuildable views, backups, restore checks, and health checks sit around it.
-- **Host-owned privacy.** Databases, transcripts, providers, policies, credentials, and backups remain under the host application's control.
+| The problem | Mnemosyne's answer | Why it matters |
+| --- | --- | --- |
+| A vector store keeps old and new facts side by side | **Lifecycle + supersession** | “Monday” can remain historical evidence after “Thursday” becomes current truth |
+| Similarity alone recalls things in the wrong context | **Eligibility gates before ranking** | Scope, project, relationship, AU/realm, sensitivity, expiry, and authority decide whether a memory may appear at all |
+| “The AI saw it” quietly becomes “the AI decided it is true” | **Governed writes** | Evidence, proposal, policy activation, confirmation, and durable memory remain different states |
+| Debugging memory means guessing why something surfaced | **Provenance + metadata-only audit** | A recall can be traced back to source and decision path without turning logs into a second memory store |
+| Index corruption turns into memory loss | **Append-only authority + rebuildable projections** | Current views and search indexes can be rebuilt from durable events |
+| Memory logic gets welded to one chatbot or model vendor | **Host-owned ports** | Mnemosyne can sit inside Delos or another runtime without owning the provider, transport, persona, or UI |
 
-## Architecture
+Mnemosyne was built for [Delos](https://github.com/Gwendolenmave/delos), but it is a model-neutral library and can be embedded in other personal AI runtimes.
+
+## A memory's journey
+
+Suppose a project meeting used to be on Monday and is now on Thursday.
+
+```text
+“The meeting is now on Thursday.”
+        │
+        ▼
+Transcript evidence keeps the source
+        │
+        ▼
+A candidate proposes a durable fact
+        │
+        ▼
+A confirmation or registered policy authorizes it
+        │
+        ▼
+Thursday supersedes Monday as current truth
+        │
+        ▼
+Anamnesis recalls Thursday in the next eligible context
+```
+
+Monday is not erased. It remains historical evidence with its former validity and the reason it stopped being current.
+
+That is the core idea: **memory is not just text plus similarity; it is evidence plus authority, lifecycle, context, and recall rules.**
+
+## The names are architecture, not decoration
+
+Mnemosyne takes her name from the Greek goddess of memory and mother of the nine Muses. The system uses that family as a map of responsibilities:
+
+- **Mnemosyne** owns durable memory and its lifecycle.
+- **Anamnesis** performs recall: it decides which memories are eligible *now* and then ranks them.
+- **Lethe** describes memories that should no longer surface normally — expired, revoked, superseded, or retrieval-disabled — without pretending history never happened.
+- **Musagetes** combines the active Muse lenses into retrieval and candidate-writing intent.
+- **The Muses** describe what kind of continuity the current moment needs: narrative, history, intimacy, everyday voice, repair, vows, embodiment, play, or systems reasoning.
 
 ```text
 Transcript evidence ───────> Episode Projection
@@ -39,9 +79,7 @@ Current scene ─────────> Muses ─────┘
                          append-only events + views
 ```
 
-Mnemosyne owns durable memory lifecycle. Anamnesis performs eligible recall. Lethe quiets obsolete or unauthorized memories without erasing their history. Musagetes and the nine Muse lenses describe what kind of continuity the current moment needs while governance keeps durable authority.
-
-See [Architecture](docs/ARCHITECTURE.md) for the dependency and ownership rules.
+If you are changing implementation boundaries, treat [Architecture](docs/ARCHITECTURE.md) as the normative contract. The README is the map for humans; Architecture is the contract for agents and maintainers.
 
 ## Install
 
@@ -61,7 +99,7 @@ npm install ./delos-mnemosyne-0.1.0-dev.0.tgz
 
 Both expose the same ESM package entry point and TypeScript declarations.
 
-## Try it locally
+## Try it without wiring a whole assistant
 
 From a source checkout:
 
@@ -70,17 +108,19 @@ npm ci
 npm run example:local
 ```
 
-The example creates a temporary SQLite store, registers a synthetic owner policy, writes one governed memory, recalls it through Anamnesis, and removes the temporary data.
+The example creates a temporary SQLite store, registers a synthetic owner policy, writes one governed memory, recalls it through Anamnesis, and removes the temporary data again.
 
-Run the complete repository verification suite with:
+Run the full repository verification suite with:
 
 ```sh
 npm run verify
 ```
 
-Normal use requires Node and npm. The full repository verification suite additionally uses Python 3 for its privacy checks.
+Normal use requires Node and npm. Full repository verification additionally uses Python 3 for privacy checks.
 
-## Use Mnemosyne from another runtime
+## Embed it in another runtime
+
+Mnemosyne deliberately does **not** own your model provider, transcript transport, clock, backup destination, audit sink, or deployment policy. The host supplies those boundaries.
 
 ```ts
 import {
@@ -105,32 +145,32 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-Backup, audit, transport, provider, and deployment policy remain host-owned. A complete runnable write-and-read example is in [`examples/local-flow.ts`](examples/local-flow.ts). Read the [integration guide](docs/INTEGRATION.md) before connecting real evidence or a live transport.
+A complete runnable write-and-read example is in [`examples/local-flow.ts`](examples/local-flow.ts). Read [Integration](docs/INTEGRATION.md) before connecting real evidence or a live transport.
 
-## Privacy
+## Privacy: the host owns the real data
 
-The repository contains source code, public documentation, schemas, and synthetic fixtures. Runtime-only material stays outside the repository, including:
+The public repository contains source code, public documentation, schemas, and synthetic fixtures. Runtime material stays outside the repository, including:
 
 - memory databases, transcripts, queues, traces, logs, and backups;
 - prompts, persona corpora, provider responses, credentials, and keys;
 - deployment principals, real account identifiers, policies, conversation identifiers, and machine paths;
 - fixtures derived from private conversations.
 
-See [Privacy model](docs/PRIVACY-MODEL.md) for the runtime and network boundaries.
+See [Privacy model](docs/PRIVACY-MODEL.md) for repository, runtime, audit, and network boundaries.
 
 ## Documentation
 
-| Document | Use it for |
+| Document | What problem it answers |
 | --- | --- |
-| [Architecture](docs/ARCHITECTURE.md) | ownership, authority, and dependency boundaries |
-| [Integration](docs/INTEGRATION.md) | connecting Mnemosyne to a host runtime |
-| [Privacy model](docs/PRIVACY-MODEL.md) | repository, runtime, audit, and network boundaries |
-| [Status](docs/STATUS.md) | implemented capabilities and their test coverage |
-| [Licensing notes](docs/LICENSING.md) | plain-language licensing boundary |
+| [Architecture](docs/ARCHITECTURE.md) | rules for agents/maintainers changing ownership, authority, or dependency boundaries |
+| [Integration](docs/INTEGRATION.md) | how a host runtime supplies evidence, storage, policy, and transport boundaries |
+| [Privacy model](docs/PRIVACY-MODEL.md) | what stays in the host and what may cross the network |
+| [Status](docs/STATUS.md) | which capabilities are implemented and where their tests live |
+| [Licensing notes](docs/LICENSING.md) | the licensing boundary in plain language |
 
-## Licence
+## Licence and maintenance
 
-Mnemosyne is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Personal use, study, modification, and noncommercial sharing are permitted under the licence; commercial use requires separate permission. [Licensing notes](docs/LICENSING.md) explain the boundary in plain language.
+Mnemosyne uses the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Personal use, study, modification, and noncommercial sharing are permitted under the licence; commercial use requires separate permission. [Licensing notes](docs/LICENSING.md) explain the boundary in plain language.
 
 The licensor and maintainer is **Gwendolen** (`@Gwendolenmave` on GitHub).
 
