@@ -126,10 +126,11 @@ See [Privacy model](docs/PRIVACY-MODEL.md) for the runtime and network boundarie
 | [Integration](docs/INTEGRATION.md) | connecting Mnemosyne to a host runtime |
 | [Privacy model](docs/PRIVACY-MODEL.md) | repository, runtime, audit, and network boundaries |
 | [Status](docs/STATUS.md) | implemented capabilities and their test coverage |
+| [Licensing notes](docs/LICENSING.md) | plain-language licensing boundary |
 
 ## Licence
 
-Mnemosyne is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE). Personal use, study, modification, and noncommercial sharing are permitted under the licence; commercial use requires separate permission. [Licence notes](LICENSE-NOTES.md) explain the boundary in plain language.
+Mnemosyne is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Personal use, study, modification, and noncommercial sharing are permitted under the licence; commercial use requires separate permission. [Licensing notes](docs/LICENSING.md) explain the boundary in plain language.
 
 The licensor and maintainer is **Gwendolen** (`@Gwendolenmave` on GitHub).
 
