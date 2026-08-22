@@ -1,0 +1,65 @@
+name: public-mnemosyne-staging-ci
+
+on:
+  push:
+    branches:
+      - public-sync/mnemosyne-v0.1-refresh-20260821
+  pull_request:
+    branches:
+      - historical/mnemosyne-public-staging-wave1-20260818
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-mnemosyne-staging-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Mnemosyne public candidate verify
+    if: >-
+      github.repository == 'Gwendolenmave/delos-for-ame' &&
+      github.event.repository.private == true &&
+      (github.event_name == 'push' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 30
+
+    steps:
+      - name: Clear dedicated candidate checkout
+        shell: bash
+        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_candidate"
+
+      - name: Checkout exact staging head only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          path: _public_mnemosyne_candidate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up required Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: _public_mnemosyne_candidate/.nvmrc
+
+      - name: Confirm isolated checkout
+        shell: bash
+        working-directory: _public_mnemosyne_candidate
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          test "$(git rev-list --all --count)" -eq 1
+
+      - name: Install locked dependencies
+        working-directory: _public_mnemosyne_candidate
+        run: npm ci --ignore-scripts
+
+      - name: Run complete public-candidate verification
+        shell: bash
+        working-directory: _public_mnemosyne_candidate
+        run: |
+          set -euo pipefail
+          npm run verify

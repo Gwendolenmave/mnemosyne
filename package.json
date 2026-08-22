@@ -1,0 +1,70 @@
+{
+  "name": "@delos/mnemosyne",
+  "version": "0.1.0-dev.0",
+  "private": true,
+  "description": "Local-first governed memory, retrieval, episode projection, and recovery for personal AI runtimes.",
+  "keywords": [
+    "ai",
+    "agent-memory",
+    "long-term-memory",
+    "memory-governance",
+    "local-first",
+    "sqlite",
+    "personal-ai"
+  ],
+  "type": "module",
+  "main": "./build/index.js",
+  "types": "./build/index.d.ts",
+  "sideEffects": false,
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "engines": {
+    "node": ">=22.22.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./build/index.d.ts",
+      "import": "./build/index.js"
+    },
+    "./core/*": {
+      "types": "./build/core/*.d.ts",
+      "import": "./build/core/*.js"
+    },
+    "./adapters/*": {
+      "types": "./build/adapters/*.d.ts",
+      "import": "./build/adapters/*.js"
+    },
+    "./recovery": {
+      "types": "./build/scripts/d0-recovery.d.ts",
+      "import": "./build/scripts/d0-recovery.js"
+    }
+  },
+  "files": [
+    "build/",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "LICENSE",
+    "LICENSE-NOTES.md",
+    "PROJECT-SUCCESSION.md",
+    "README.md",
+    "README.zh-CN.md",
+    "SECURITY.md",
+    "docs/",
+    "prompts/"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "npm run clean --silent && tsc -p tsconfig.build.json",
+    "example:local": "npm run build --silent && node build/examples/local-flow.js",
+    "test": "npm run clean --silent && tsc -p tsconfig.json && node --test build/tests/*.test.js",
+    "prepare": "npm run build",
+    "scan": "python3 scripts/scan.py",
+    "scan:adversarial": "python3 scripts/scan-adversarial-test.py",
+    "scan:history": "python3 scripts/scan-history.py",
+    "verify": "npm run typecheck && npm test && npm run scan:adversarial && npm run scan && npm run scan:history"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "typescript": "^5.8.0"
+  }
+}
