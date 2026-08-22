@@ -1,0 +1,17 @@
+name: publication-runner-probe
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe household self-hosted runner
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 2
+    steps:
+      - run: echo PUBLICATION_SELF_HOSTED_RUNNER_VISIBLE=1
