@@ -94,7 +94,6 @@ The package exposes the storage, governance, recall, decision, and automation bu
 ```ts
 import {
   Anamnesis,
-  Governance,
   SqliteMnemosyne,
 } from "@delos/mnemosyne";
 
