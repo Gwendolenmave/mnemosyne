@@ -4,84 +4,61 @@
 
 [English](README.md)
 
-**让个人 AI 在正确的时候，因正确的理由，想起正确的事。**
+**给个人 AI 的长期记忆，但“什么可以被记住、什么时候可以被想起”都有明确规则。**
 
-很多“AI 记忆”方案只解决了一件事：**找一段和当前消息相似的旧文本。** 真正长期使用时，麻烦远不止这些。
+Mnemosyne 解决的是普通 vector store 自己解决不了的那一部分。
 
-旧事实过期了怎么办？一段记忆只属于某个项目或虚构世界怎么办？某句话只是被提到过，并不等于应该成为持久事实，怎么办？一句话本身没错，但如果被召回到错误的关系或场景里，又怎么办？
+找到“和当前消息相似的旧文本”当然有用，但长期记忆还要回答更多问题：这条事实现在还有效吗？它真的被授权成持久记忆了吗？它只属于某个项目、关系或虚构世界吗？当前场景有资格看到它吗？两条记忆冲突时，哪条是当前事实，哪条只是历史？
 
-Mnemosyne 就是围绕这些问题设计的。
+Mnemosyne 把这些问题拆开，而不是全塞进一个 similarity score 里。
 
-| 你遇到的问题 | Mnemosyne 的做法 | 为什么重要 |
-| --- | --- | --- |
-| 向量库把新旧事实一起留着 | **Lifecycle + supersession** | “周一”可以保留为历史证据，同时“周四”成为当前事实 |
-| 相似度高，不代表现在有资格出现 | **先过 eligibility gates，再排序** | scope、项目、关系、AU/realm、敏感度、时效和 authority 先决定“能不能出现” |
-| “AI 看见过”悄悄变成“AI 决定这是真的” | **受治理写入** | evidence、proposal、policy activation、confirmation、durable memory 是不同状态 |
-| 记忆为什么被召回很难追 | **Provenance + metadata-only audit** | 可以追到来源和决策路径，而不是再造一套隐藏记忆库 |
-| 索引坏了就等于记忆没了 | **Append-only authority + 可重建 projection** | 当前视图和搜索索引都可以从 durable event 重建 |
-| 记忆系统和某个聊天模型绑死 | **Host-owned ports** | 可以接在 Delos 或其他 runtime 后面，而不接管 provider、transport、persona 或 UI |
+## 从这里开始
 
-Mnemosyne 最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但它本身与模型无关，也可以独立接入其他个人 AI runtime。
+| 我想…… | 先看这里 |
+| --- | --- |
+| 用一分钟理解它为什么存在 | [60 秒模型](#60-秒模型) |
+| 在自己电脑上先跑一下 | [本地试跑](#本地试跑) |
+| 把它接进另一个 runtime | [Integration](docs/INTEGRATION.md) |
+| 看现在到底实现了哪些能力 | [Status](docs/STATUS.md) |
+| 看清楚隐私与数据边界 | [Privacy model](docs/PRIVACY-MODEL.md) |
+| 修改 Mnemosyne 本身 | **先读 [Architecture](docs/ARCHITECTURE.md)** |
 
-## 一条记忆到底怎么“成为记忆”
+Mnemosyne 最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但 package 本身与模型无关，也可以嵌入其他个人 AI runtime。
+
+## 60 秒模型
 
 假设一个项目会议原来在周一，现在改到了周四。
 
+普通 vector store 很可能把两句话都留下来，然后在以后查询时返回“看起来更相似”的那条。Mnemosyne 会把这次变化当成 lifecycle 变化来处理：
+
 ```text
+“会议在周一。”
+        │
+        │ 后来
+        ▼
 “会议现在改到周四。”
         │
         ▼
-Transcript evidence 保存原始来源
+原始 source evidence 继续保留
         │
         ▼
-Candidate 提议一条持久事实
+受治理决策让“周四”成为当前事实
         │
         ▼
-确认或已注册 policy 为它授权
-        │
-        ▼
-周四取代周一，成为当前事实
-        │
-        ▼
-下一次符合条件时，Anamnesis 召回周四
+“周一”留在历史里；“周四”作为当前 truth 有资格被召回
 ```
 
-周一不会被粗暴删掉。它仍然作为历史证据存在，并保留“它曾经有效、后来为何不再有效”的信息。
+这里不需要假装“周一”从未被说过。真正重要的是：**历史证据和当前记忆不是同一种东西。**
 
-这就是 Mnemosyne 的核心：**记忆不是 text + similarity，而是 evidence + authority + lifecycle + context + recall rules。**
+这个例子基本已经包含了整套设计：
 
-## 这些神话名字不是装饰
+- **Evidence 不会自动变成 memory。** Transcript 里出现过，不代表它就是持久事实。
+- **先判断有没有资格出现，再谈排序。** Scope、lifecycle、authority、sensitivity、expiry、关系/项目/AU 边界和 retrieval permission 先决定“能不能出现”。
+- **旧事实可以被 supersede，而不是直接抹掉。** 当前 truth 会更新，历史仍然可追。
+- **Index 是可重建的。** Durable event history 才是 authority；当前 view 和 search projection 都是派生状态。
+- **Host 仍然拥有系统。** Mnemosyne 不接管 model provider、persona、transport、UI 或 deployment identity。
 
-Mnemosyne 取名自希腊神话中的记忆女神、九位缪斯的母亲。系统把这组名字当作职责地图：
-
-- **Mnemosyne**：掌管 durable memory 和完整 lifecycle；
-- **Anamnesis**：负责 recall，先判断哪些 memory 现在有资格出现，再排序；
-- **Lethe**：描述那些正常情况下不该再被召回的 memory——expired、revoked、superseded、retrieval-disabled——但不会假装历史从未发生；
-- **Musagetes**：把当前活跃的 Muse lens 组合成 retrieval intent 和 candidate-writing intent；
-- **九位 Muse**：描述此刻需要保护哪一种连续性，例如叙事、历史、亲密、日常声音、修复、誓言、身体场景、玩笑或系统思维。
-
-```text
-Transcript evidence ───────> Episode Projection
-          │                         │
-当前 scene ────────────> Muses ─────┘
-                            │
-                       Musagetes
-                    ┌───────┴────────┐
-                    ▼                ▼
-            RetrievalIntent   MemoryCandidateIntent
-                    │                │
-                    ▼                ▼
-               Anamnesis        受治理决策路径
-                    ▲                │
-                    └──────── Mnemosyne ─────> Lethe
-                                      │
-                                      ▼
-                              append-only event + views
-```
-
-如果你是在修改实现边界，请把 [Architecture](docs/ARCHITECTURE.md) 当作规范合同。README 是给人看的地图，Architecture 是给施工机和维护者看的硬规则。
-
-## 安装
+## 本地试跑
 
 需要 **Node.js 22.22 或更新版本**。
 
@@ -91,24 +68,14 @@ Transcript evidence ───────> Episode Projection
 npm install github:Gwendolenmave/mnemosyne
 ```
 
-也可以安装 release tarball：
-
-```sh
-npm install ./delos-mnemosyne-0.1.0-dev.0.tgz
-```
-
-两种方式暴露相同的 ESM package 入口和 TypeScript 声明。
-
-## 不接整个助手，也可以先试
-
-在源码目录中：
+如果想先看完整写入 + 召回流程，又不想先接整套助手，可以 clone 仓库后运行：
 
 ```sh
 npm ci
 npm run example:local
 ```
 
-示例会创建一个临时 SQLite store，注册合成 owner policy，写入一条受治理记忆，再通过 Anamnesis 将它召回，最后把临时数据删掉。
+示例会创建临时 SQLite store，注册一条合成 policy，写入一条受治理 memory，再通过 Anamnesis 召回，最后清掉临时数据。
 
 完整仓库验收：
 
@@ -116,11 +83,13 @@ npm run example:local
 npm run verify
 ```
 
-正常使用只需要 Node 与 npm；完整仓库验收还会用 Python 3 跑隐私检查。
+正常使用 package 只需要 Node 和 npm；完整仓库验收还会使用 Python 3 做隐私检查。
 
-## 接到其他 runtime
+## 把它接进 host runtime
 
-Mnemosyne 刻意**不拥有**你的模型供应商、transcript transport、clock、backup destination、audit sink 或 deployment policy。这些边界由 host 提供。
+Mnemosyne 刻意**不拥有**你的 provider、transcript transport、clock、backup destination、audit sink 或 deployment policy。这些边界都由 host 提供。
+
+Package 从一个 ESM 入口暴露 storage、governance、recall、decision 与 automation 组件：
 
 ```ts
 import {
@@ -131,12 +100,6 @@ import {
 
 const handle = SqliteMnemosyne.openMnemosyne("./local-state/mnemosyne.db");
 
-const governance = new Governance.MnemosyneGovernanceService({
-  store: handle.store,
-  backup: (label) => createVerifiedBackup(label),
-  audit: (metadata) => writeMetadataOnlyAudit(metadata),
-});
-
 const packet = Anamnesis.buildMemoryReadPacket({
   source: handle.store,
   query: "the current project milestone",
@@ -145,32 +108,62 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-完整可运行的写入与召回例子见 [`examples/local-flow.ts`](examples/local-flow.ts)。接入真实 evidence 或 live transport 前，请先读 [Integration](docs/INTEGRATION.md)。
+这段只展示 read side 的形状。完整可运行的 governed write + recall 例子在 [`examples/local-flow.ts`](examples/local-flow.ts)。接真实 evidence 或 live transport 前，请先读 [Integration](docs/INTEGRATION.md)。
+
+## 这些名字分别负责什么
+
+希腊神话命名只是职责地图，不是使用 package 前必须背下来的世界观。
+
+| 名字 | 负责什么 |
+| --- | --- |
+| **Mnemosyne** | durable memory 的 lifecycle 与 governance |
+| **Anamnesis** | recall：先过滤 eligibility，再 ranking 和 budget |
+| **Lethe** | 正常情况下不该再出现的 material，但不假装历史从未发生 |
+| **Musagetes** | 把当前 continuity lens 组合成 retrieval / candidate-writing intent |
+| **Muses** | 描述当前时刻需要保护哪一种连续性 |
+
+如果你是在改这些边界，请以 [Architecture](docs/ARCHITECTURE.md) 为准，不要从神话名字反推实现。
+
+## Mnemosyne 做什么，也不做什么
+
+Mnemosyne **会做**：
+
+- 带 provenance、policy / confirmation 边界的 governed memory write；
+- revision、expiry、revocation、supersession、retrieval disablement 和授权删除等 lifecycle 操作；
+- 先做 eligibility 过滤，再进行 similarity / ranking 的 recall；
+- append-only event authority，以及可重建的当前 view / index；
+- metadata-only audit，避免诊断日志偷偷变成第二套 memory store。
+
+Mnemosyne **不会做**：
+
+- chatbot UI 或 hosted service；
+- model provider 或模型账号；
+- persona system；
+- 接管你的 transcript 或 deployment identity；
+- 自动把任意 model output / transcript text 提升成 durable truth。
 
 ## 隐私：真实数据归 host 所有
 
-公开仓库只包含源码、公开文档、schema 和明确的合成 fixture。以下运行时材料留在仓库之外：
+公开仓库只包含源码、公开文档、schema 和明确的合成 fixture。真实运行时数据应该留在仓库之外，包括 memory database、transcript、queue、log、backup、prompt、provider response、credential、账号标识和机器路径。
 
-- memory database、transcript、queue、trace、log 与 backup；
-- prompt、persona corpus、provider response、credential 与 key；
-- deployment principal、真实账号标识、policy、conversation identifier 与机器路径；
-- 来自私人聊天的 fixture。
+网络行为也属于 host 边界：Mnemosyne 是 library，不是云服务。仓库 / runtime / network 的完整划分见 [Privacy model](docs/PRIVACY-MODEL.md)。
 
-完整边界见 [Privacy model](docs/PRIVACY-MODEL.md)。
+## 如果你要改代码
 
-## 文档导航
+README 是给人看的地图；[Architecture](docs/ARCHITECTURE.md) 才是给施工机和维护者的规范合同。
 
-| 文档 | 解决什么问题 |
-| --- | --- |
-| [Architecture](docs/ARCHITECTURE.md) | 给施工机/维护者看的 ownership、authority、dependency 硬规则 |
-| [Integration](docs/INTEGRATION.md) | host 怎样提供 evidence、storage、policy 和 transport 边界 |
-| [Privacy model](docs/PRIVACY-MODEL.md) | 哪些数据留在 host，哪些可能经过网络 |
-| [Status](docs/STATUS.md) | 哪些能力已经实现、测试在哪里 |
-| [Licensing notes](docs/LICENSING.md) | 通俗理解许可证边界 |
+后续文档刻意保持很少：
+
+- **接入 Mnemosyne：** [Integration](docs/INTEGRATION.md)
+- **检查实现覆盖：** [Status](docs/STATUS.md)
+- **检查仓库 / runtime / network 边界：** [Privacy model](docs/PRIVACY-MODEL.md)
+- **修改 ownership、authority、lifecycle 或 dependency 规则：** [Architecture](docs/ARCHITECTURE.md)
+
+如果实现和 Architecture 对不上，不要猜哪一边“本来应该”是真的；直接检查当前代码和测试。
 
 ## 许可证与维护
 
-Mnemosyne 使用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)。依照许可证，可以进行个人使用、学习、修改和非商业分享；商业使用需要另行许可。[Licensing notes](docs/LICENSING.md) 提供通俗解释。
+Mnemosyne 使用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)。依照许可证，可以个人使用、学习、修改和非商业分享；商业使用需要另行许可。
 
 许可人与维护者为 **Gwendolen**（GitHub：`@Gwendolenmave`）。
 
