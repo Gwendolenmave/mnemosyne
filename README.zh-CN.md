@@ -94,7 +94,6 @@ Package 从一个 ESM 入口暴露 storage、governance、recall、decision 与 
 ```ts
 import {
   Anamnesis,
-  Governance,
   SqliteMnemosyne,
 } from "@delos/mnemosyne";
 
