@@ -23,6 +23,23 @@ export type MnemosyneScope = "global" | "relationship" | "project" | "au" | "ses
 export type MnemosyneSensitivity = "normal" | "sensitive" | "intimate";
 export type PriorKey = "identity" | "relationship" | "household_now" | "project_now";
 
+/** Orthogonal evidence axis written by current proposal/governance writers. */
+export type CanonicalSourceBasis = "explicit" | "observed" | "inferred" | "imported";
+
+/**
+ * Historical conflated workflow/evidence values. They remain readable so
+ * append-only history can be folded, but new writers should use the canonical
+ * evidence axis plus ProposalOrigin instead of creating new conflated values.
+ */
+export type LegacySourceBasis =
+  | "user_stated"
+  | "owner_requested"
+  | "companion_self"
+  | "muse_suggestion";
+
+/** Orthogonal workflow axis: which path initiated the proposal. */
+export type ProposalOrigin = "companion_self" | "owner_request" | "muse_signal" | "backfill";
+
 export interface AttributesSetEvent {
   type: "attributes_set";
   memoryId: string;
@@ -32,7 +49,8 @@ export interface AttributesSetEvent {
   auId?: string;
   sensitivity: MnemosyneSensitivity;
   importance: 1 | 2 | 3;
-  sourceBasis?: "explicit" | "observed" | "inferred" | "derived";
+  /** `derived` is accepted only as historical compatibility input. */
+  sourceBasis?: CanonicalSourceBasis | "derived";
 }
 
 export interface ConfirmedEvent {
@@ -49,7 +67,7 @@ export interface ConfirmedEvent {
  * from confirmed events only; the axes never merge).
  */
 export interface ProvenanceRoles {
-  source_basis?: "user_stated" | "owner_requested" | "companion_self" | "muse_suggestion";
+  source_basis?: CanonicalSourceBasis | LegacySourceBasis;
   discovered_by?: "muse" | "owner" | "companion";
   requested_by?: "owner" | "companion";
   proposed_by?: "owner" | "companion";
@@ -61,7 +79,7 @@ export interface ProvenanceRoles {
    * Legacy cards carry only source_basis; deriveProvenanceAxes maps them
    * without rewriting history.
    */
-  proposal_origin?: "companion_self" | "owner_request" | "muse_signal" | "backfill";
+  proposal_origin?: ProposalOrigin;
 }
 
 /**
@@ -71,24 +89,33 @@ export interface ProvenanceRoles {
  * stays null (never invented).
  */
 export function deriveProvenanceAxes(roles: ProvenanceRoles | null): {
-  evidenceBasis: "explicit" | "observed" | "inferred" | "imported" | null;
-  proposalOrigin: "companion_self" | "owner_request" | "muse_signal" | "backfill" | null;
+  evidenceBasis: CanonicalSourceBasis | null;
+  proposalOrigin: ProposalOrigin | null;
 } {
   if (roles === null) {
     return { evidenceBasis: null, proposalOrigin: null };
   }
+  const sourceBasis = roles.source_basis;
   const origin =
     roles.proposal_origin ??
-    (roles.source_basis === "owner_requested"
+    (sourceBasis === "owner_requested"
       ? "owner_request"
-      : roles.source_basis === "companion_self"
+      : sourceBasis === "companion_self"
         ? "companion_self"
-        : roles.source_basis === "muse_suggestion"
+        : sourceBasis === "muse_suggestion"
           ? "muse_signal"
-          : roles.source_basis === "user_stated"
+          : sourceBasis === "user_stated"
             ? (roles.requested_by === "owner" ? "owner_request" : "companion_self")
             : null);
-  const basis = roles.source_basis === "user_stated" ? ("explicit" as const) : null;
+  const basis: CanonicalSourceBasis | null =
+    sourceBasis === "explicit" ||
+    sourceBasis === "observed" ||
+    sourceBasis === "inferred" ||
+    sourceBasis === "imported"
+      ? sourceBasis
+      : sourceBasis === "user_stated"
+        ? "explicit"
+        : null;
   return { evidenceBasis: basis, proposalOrigin: origin };
 }
 
@@ -197,6 +224,17 @@ export interface MnemosyneIssue {
 const SCOPES: readonly string[] = ["global", "relationship", "project", "au", "session"];
 const SENSITIVITIES: readonly string[] = ["normal", "sensitive", "intimate"];
 const PRIOR_KEYS: readonly string[] = ["identity", "relationship", "household_now", "project_now"];
+const SOURCE_BASES: readonly string[] = ["explicit", "observed", "inferred", "imported", "derived"];
+const PROVENANCE_SOURCE_BASES: readonly string[] = [
+  "explicit",
+  "observed",
+  "inferred",
+  "imported",
+  "user_stated",
+  "owner_requested",
+  "companion_self",
+  "muse_suggestion",
+];
 const HUMAN_ONLY_TYPES: readonly string[] = [
   "confirmed",
   "sealed",
@@ -264,6 +302,8 @@ export function validateMnemosyneStream(
           issues.push({ path: `${path}.sensitivity`, message: "invalid sensitivity" });
         if (![1, 2, 3].includes(event.importance as number))
           issues.push({ path: `${path}.importance`, message: "importance must be 1..3" });
+        if (event.sourceBasis !== undefined && !SOURCE_BASES.includes(event.sourceBasis as string))
+          issues.push({ path: `${path}.sourceBasis`, message: "invalid sourceBasis" });
         break;
       }
       case "confirmed":
@@ -318,7 +358,7 @@ export function validateMnemosyneStream(
           break;
         }
         const allowed: Record<string, readonly string[]> = {
-          source_basis: ["user_stated", "owner_requested", "companion_self", "muse_suggestion"],
+          source_basis: PROVENANCE_SOURCE_BASES,
           discovered_by: ["muse", "owner", "companion"],
           requested_by: ["owner", "companion"],
           proposed_by: ["owner", "companion"],
