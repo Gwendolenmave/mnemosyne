@@ -108,7 +108,11 @@ async function buildRig(
         generate: async () => {
           calls.push(1);
           return (
-            results.shift() ?? { ok: true, text: '{"decision":"decline","note":"synthetic no"}' }
+            results.shift() ?? {
+              ok: true,
+              text: '{"decision":"decline","note":"synthetic no"}',
+              servedModel: "synthetic-model",
+            }
           );
         },
       },
