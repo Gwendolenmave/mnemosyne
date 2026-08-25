@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import { foldMemoryEvents } from "../core/domain/memory-fold.js";
 import type { MemoryEventEnvelope } from "../core/domain/memory.js";
-import { asManualEntryId, asMemoryId } from "../core/domain/ids.js";
+import { asManualEntryId, asMemoryEventId, asMemoryId } from "../core/domain/ids.js";
 import { validateMnemosyneStream } from "../core/domain/mnemosyne.js";
 import {
   planPolicyActivatedMerge,
@@ -12,7 +12,7 @@ import {
 } from "../core/services/policy-card-consolidation.js";
 
 function card(
-  id = randomUUID(),
+  id: string = randomUUID(),
   overrides: Partial<PolicyConsolidationCard> = {},
 ): PolicyConsolidationCard {
   return {
@@ -29,7 +29,7 @@ function card(
 function created(memoryId: string, content: string): MemoryEventEnvelope {
   return {
     schemaVersion: 1,
-    eventId: randomUUID(),
+    eventId: asMemoryEventId(randomUUID()),
     occurredAt: "2026-08-26T00:00:00.000Z",
     event: {
       type: "memory_created",
@@ -47,7 +47,7 @@ function created(memoryId: string, content: string): MemoryEventEnvelope {
 function supersededEvent(source: string, survivor: string): MemoryEventEnvelope {
   return {
     schemaVersion: 1,
-    eventId: randomUUID(),
+    eventId: asMemoryEventId(randomUUID()),
     occurredAt: "2026-08-26T00:00:00.000Z",
     event: {
       type: "memory_superseded",
