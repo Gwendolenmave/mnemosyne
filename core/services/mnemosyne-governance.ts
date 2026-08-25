@@ -10,7 +10,7 @@
  * Vocabulary mapping (existing kernel + governance events only — no
  * second source of truth):
  *   propose   = memory_created + attributes_set            (unconfirmed)
- *   approve   = confirmed{by: owner|companion|both}            (human only)
+ *   approve   = confirmed{by: owner|companion|both}        (human only)
  *   edit      = memory_revised(amendment)                  (stays unconfirmed)
  *   revise    = memory_revised(correction) + confirmed{by} (one transaction)
  *   reject    = retrieval_set{false, human} + memory_deactivated
@@ -26,11 +26,20 @@
  */
 
 import { randomUUID } from "node:crypto";
-import type { MemoryEventEnvelope } from "../domain/memory.js";
-import type {
-  MnemosyneEnvelope,
-  OwnerPolicyCurrent,
-  ProvenanceRoles,
+import type { MemoryCreationEvidence, MemoryEventEnvelope } from "../domain/memory.js";
+import {
+  asConversationId,
+  asManualEntryId,
+  asMessageId,
+  asTurnId,
+} from "../domain/ids.js";
+import {
+  deriveProvenanceAxes,
+  type CanonicalSourceBasis,
+  type MnemosyneEnvelope,
+  type OwnerPolicyCurrent,
+  type ProposalOrigin,
+  type ProvenanceRoles,
 } from "../domain/mnemosyne.js";
 import { assessUntrustedBody, estimateTokens } from "./anamnesis.js";
 
@@ -70,6 +79,8 @@ export interface GovernanceItemView {
   lifecycle_state: string;
   confirmed_by: string | null;
   retrieval: string;
+  /** Canonical evidence basis projected from governance events. */
+  source_basis?: string | null;
   tags_text: string;
   created_at: string;
   updated_at: string;
@@ -93,6 +104,13 @@ export function parseProvenance(item: GovernanceItemView): ProvenanceRoles | nul
 /** Where a proposal's text is grounded. */
 export type ProposalEvidence =
   | {
+      /** Already-validated canonical creation evidence; never relabelled here. */
+      kind: "memory_creation";
+      evidence: MemoryCreationEvidence;
+      /** Exact source-turn identity used only by host-side dedup callers. */
+      sourceTurnId?: string;
+    }
+  | {
       kind: "transcript";
       conversationId: string;
       turnId: string;
@@ -101,6 +119,49 @@ export type ProposalEvidence =
       externalKey?: string;
     }
   | { kind: "manual"; note?: string };
+
+function materializeProposalEvidence(input: ProposalEvidence): MemoryCreationEvidence {
+  if (input.kind === "memory_creation") {
+    return input.evidence;
+  }
+  if (input.kind === "transcript") {
+    return {
+      kind: "user_statement",
+      source: {
+        kind: "conversation_message",
+        conversationId: asConversationId(input.conversationId),
+        turnId: asTurnId(input.turnId),
+        messageId: asMessageId(input.messageId),
+        role: "user",
+        ...(input.externalKey !== undefined
+          ? { external: { source: "telegram", externalTurnKey: input.externalKey } }
+          : {}),
+      },
+    };
+  }
+  return {
+    kind: "user_statement",
+    source: { kind: "manual_entry", manualEntryId: asManualEntryId(randomUUID()) },
+  };
+}
+
+/** Canonical evidence axis for every newly materialized proposal. */
+export function canonicalBasisForEvidence(evidence: MemoryCreationEvidence): CanonicalSourceBasis {
+  switch (evidence.kind) {
+    case "user_statement":
+      return "explicit";
+    case "assistant_dialogue":
+      return "observed";
+    case "model_inference":
+      return "inferred";
+    case "imported":
+      return "imported";
+  }
+}
+
+function proposalEvidenceKind(input: ProposalEvidence): string {
+  return input.kind === "memory_creation" ? input.evidence.kind : input.kind;
+}
 
 export interface ProposeInput {
   body: string;
@@ -158,6 +219,57 @@ export interface MnemosyneGovernanceOptions {
 const MAX_BODY_CHARS = 2000;
 const MAX_TITLE_CHARS = 120;
 
+function proposalOriginFor(input: Pick<ProposeInput, "proposedBy" | "provenance">): ProposalOrigin {
+  return (
+    deriveProvenanceAxes(input.provenance ?? null).proposalOrigin ??
+    (input.proposedBy === "owner" ? "owner_request" : "companion_self")
+  );
+}
+
+function resolveCanonicalProvenance(
+  input: Pick<ProposeInput, "proposedBy" | "provenance">,
+  evidenceBasis: CanonicalSourceBasis,
+): { ok: true; value: ProvenanceRoles } | { ok: false; issues: GovernanceIssue[] } {
+  const axes = deriveProvenanceAxes(input.provenance ?? null);
+  if (axes.evidenceBasis !== null && axes.evidenceBasis !== evidenceBasis) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "provenance.source_basis",
+          message: `provenance evidence basis ${axes.evidenceBasis} conflicts with canonical evidence basis ${evidenceBasis}`,
+        },
+      ],
+    };
+  }
+  return {
+    ok: true,
+    value: {
+      ...(input.provenance ?? {}),
+      source_basis: evidenceBasis,
+      proposal_origin: axes.proposalOrigin ?? proposalOriginFor(input),
+    },
+  };
+}
+
+function verifiedGeneratorIdentity(value: string): boolean {
+  const normalized = value.trim();
+  return value === normalized && normalized.length > 0 && normalized !== "unverified-model";
+}
+
+function resolveEvidence(
+  input: ProposalEvidence,
+): { ok: true; value: MemoryCreationEvidence } | { ok: false; issues: GovernanceIssue[] } {
+  try {
+    return { ok: true, value: materializeProposalEvidence(input) };
+  } catch {
+    return {
+      ok: false,
+      issues: [{ path: "evidence", message: "proposal evidence contains an invalid canonical identity" }],
+    };
+  }
+}
+
 export class MnemosyneGovernanceService {
   private readonly store: GovernanceStore;
   private readonly backup: (label: string) => { path: string };
@@ -204,27 +316,15 @@ export class MnemosyneGovernanceService {
       return { status: "refused", issues };
     }
 
-    const memoryId = randomUUID();
-    const evidence =
-      input.evidence.kind === "transcript"
-        ? {
-            kind: "user_statement" as const,
-            source: {
-              kind: "conversation_message" as const,
-              conversationId: input.evidence.conversationId,
-              turnId: input.evidence.turnId,
-              messageId: input.evidence.messageId,
-              role: "user" as const,
-              ...(input.evidence.externalKey !== undefined
-                ? { external: { source: "telegram", externalTurnKey: input.evidence.externalKey } }
-                : {}),
-            },
-          }
-        : {
-            kind: "user_statement" as const,
-            source: { kind: "manual_entry" as const, manualEntryId: randomUUID() },
-          };
+    const resolvedEvidence = resolveEvidence(input.evidence);
+    if (!resolvedEvidence.ok) return { status: "refused", issues: resolvedEvidence.issues };
+    const evidence = resolvedEvidence.value;
+    const evidenceBasis = canonicalBasisForEvidence(evidence);
+    const resolvedProvenance = resolveCanonicalProvenance(input, evidenceBasis);
+    if (!resolvedProvenance.ok) return { status: "refused", issues: resolvedProvenance.issues };
+    const provenance = resolvedProvenance.value;
 
+    const memoryId = randomUUID();
     const created = {
       schemaVersion: 1,
       eventId: randomUUID(),
@@ -250,27 +350,24 @@ export class MnemosyneGovernanceService {
         ...(input.scope === "au" ? { auId: input.auId! } : {}),
         sensitivity: input.sensitivity,
         importance: input.importance,
-        sourceBasis: "explicit",
+        sourceBasis: evidenceBasis,
       },
     };
-    const governance: MnemosyneEnvelope[] = [attributes];
-    if (input.provenance !== undefined && Object.keys(input.provenance).length > 0) {
-      // Same transaction: a proposal never exists without its workflow
-      // provenance. The event actor is the executing process; authorship
-      // truth is the roles payload itself.
-      governance.push({
+    const governance: MnemosyneEnvelope[] = [
+      attributes,
+      {
         eventId: randomUUID(),
         occurredAt: this.now().toISOString(),
         actor: input.executionActor ?? input.proposedBy,
-        event: { type: "provenance_set", memoryId, roles: { ...input.provenance } },
-      });
-    }
+        event: { type: "provenance_set", memoryId, roles: provenance },
+      },
+    ];
     return this.commit("propose", memoryId, [created], governance, {
       scope: input.scope,
       sensitivity: input.sensitivity,
-      evidence_kind: input.evidence.kind,
+      evidence_kind: proposalEvidenceKind(input.evidence),
       proposed_by: input.proposedBy,
-      ...(input.provenance !== undefined ? { provenance_roles: { ...input.provenance } } : {}),
+      provenance_roles: provenance,
       token_estimate: estimateTokens(body),
     });
   }
@@ -405,6 +502,30 @@ export class MnemosyneGovernanceService {
     }
 
     const issues: GovernanceIssue[] = [];
+    const resolvedEvidence = resolveEvidence(input.evidence);
+    if (!resolvedEvidence.ok) return { status: "refused", issues: resolvedEvidence.issues };
+    const evidence = resolvedEvidence.value;
+    const evidenceBasis = canonicalBasisForEvidence(evidence);
+    if (evidenceBasis === "inferred" || evidenceBasis === "imported") {
+      issues.push({
+        path: "evidence.kind",
+        message: `${evidenceBasis} evidence cannot be activated under owner policy`,
+      });
+    }
+    if (evidenceBasis !== input.activation.sourceBasis) {
+      issues.push({
+        path: "activation.sourceBasis",
+        message: `activation basis ${input.activation.sourceBasis} does not match evidence basis ${evidenceBasis}`,
+      });
+    }
+    const resolvedProvenance = resolveCanonicalProvenance(input, evidenceBasis);
+    if (!resolvedProvenance.ok) issues.push(...resolvedProvenance.issues);
+    if (!verifiedGeneratorIdentity(input.activation.generator)) {
+      issues.push({
+        path: "activation.generator",
+        message: "verified generator identity is required for policy activation",
+      });
+    }
     const body = input.body.trim();
     const title = (input.title ?? body.slice(0, 60)).trim();
     if (body.length === 0) issues.push({ path: "body", message: "memory text is required" });
@@ -423,30 +544,12 @@ export class MnemosyneGovernanceService {
         if (!admission.ok) issues.push({ path: field, message: admission.reason });
       }
     }
-    if (issues.length > 0) {
+    if (issues.length > 0 || !resolvedProvenance.ok) {
       return { status: "refused", issues };
     }
 
+    const provenance = resolvedProvenance.value;
     const memoryId = randomUUID();
-    const evidence =
-      input.evidence.kind === "transcript"
-        ? {
-            kind: "user_statement" as const,
-            source: {
-              kind: "conversation_message" as const,
-              conversationId: input.evidence.conversationId,
-              turnId: input.evidence.turnId,
-              messageId: input.evidence.messageId,
-              role: "user" as const,
-              ...(input.evidence.externalKey !== undefined
-                ? { external: { source: "telegram", externalTurnKey: input.evidence.externalKey } }
-                : {}),
-            },
-          }
-        : {
-            kind: "user_statement" as const,
-            source: { kind: "manual_entry" as const, manualEntryId: randomUUID() },
-          };
     const kernel: MemoryEventEnvelope[] = [
       {
         schemaVersion: 1,
@@ -488,31 +591,29 @@ export class MnemosyneGovernanceService {
           ...(input.scope === "au" ? { auId: input.auId! } : {}),
           sensitivity: input.sensitivity,
           importance: input.importance,
-          sourceBasis: input.activation.sourceBasis,
+          sourceBasis: evidenceBasis,
         },
       },
-    ];
-    if (input.provenance !== undefined && Object.keys(input.provenance).length > 0) {
-      governance.push({
+      {
         eventId: randomUUID(),
         occurredAt: this.now().toISOString(),
         actor: input.executionActor ?? "system",
-        event: { type: "provenance_set", memoryId, roles: { ...input.provenance } },
-      });
-    }
-    governance.push({
-      eventId: randomUUID(),
-      occurredAt: this.now().toISOString(),
-      actor: "system",
-      event: {
-        type: "policy_activated",
-        memoryId,
-        policyId: input.activation.policyId,
-        activationBasis: "owner_policy",
-        sourceBasis: input.activation.sourceBasis,
-        generator: input.activation.generator,
+        event: { type: "provenance_set", memoryId, roles: provenance },
       },
-    });
+      {
+        eventId: randomUUID(),
+        occurredAt: this.now().toISOString(),
+        actor: "system",
+        event: {
+          type: "policy_activated",
+          memoryId,
+          policyId: input.activation.policyId,
+          activationBasis: "owner_policy",
+          sourceBasis: input.activation.sourceBasis,
+          generator: input.activation.generator,
+        },
+      },
+    ];
     if (input.expiresAt !== undefined) {
       governance.push({
         eventId: randomUUID(),
@@ -524,13 +625,13 @@ export class MnemosyneGovernanceService {
     return this.commit("propose_under_policy", memoryId, kernel, governance, {
       scope: input.scope,
       sensitivity: input.sensitivity,
-      evidence_kind: input.evidence.kind,
+      evidence_kind: proposalEvidenceKind(input.evidence),
       activation_policy_id: input.activation.policyId,
       activation_source_basis: input.activation.sourceBasis,
       generator: input.activation.generator,
       ...(input.expiresAt !== undefined ? { expires_at: input.expiresAt } : {}),
       ...(input.supersedes !== undefined ? { supersedes: input.supersedes.memoryId } : {}),
-      ...(input.provenance !== undefined ? { provenance_roles: { ...input.provenance } } : {}),
+      provenance_roles: provenance,
       token_estimate: estimateTokens(body),
     });
   }
@@ -563,6 +664,39 @@ export class MnemosyneGovernanceService {
     }
     if (item.approval_state === "policy_activated") {
       return { status: "already", detail: "already policy-activated" };
+    }
+    if (!verifiedGeneratorIdentity(activation.generator)) {
+      return {
+        status: "refused",
+        issues: [
+          {
+            path: "activation.generator",
+            message: "verified generator identity is required for policy activation",
+          },
+        ],
+      };
+    }
+    const provenanceBasis = deriveProvenanceAxes(parseProvenance(item)).evidenceBasis;
+    const projectedBasis =
+      item.source_basis === "explicit" || item.source_basis === "observed"
+        ? item.source_basis
+        : null;
+    if (
+      projectedBasis === null ||
+      provenanceBasis === null ||
+      projectedBasis !== provenanceBasis ||
+      projectedBasis !== activation.sourceBasis
+    ) {
+      return {
+        status: "refused",
+        issues: [
+          {
+            path: "activation.sourceBasis",
+            message:
+              "existing card evidence basis is absent, non-activatable, or inconsistent with the requested activation basis",
+          },
+        ],
+      };
     }
     const governance: MnemosyneEnvelope[] = [
       {
@@ -871,11 +1005,6 @@ export class MnemosyneGovernanceService {
   }
 
   /**
-   * At-most-one-decision-per-source-turn support: any card (pending or
-   * confirmed, active or terminal) whose evidence pointer carries this
-   * turnId blocks a second proposal from the same turn.
-   */
-  /**
    * D0 continuous-completion ruling item 9: only an ACTIVE card blocks a
    * new decision for its source turn. A revoked or superseded card was
    * explicitly retired by the owner/system — its turn is re-decidable
@@ -955,8 +1084,6 @@ export class MnemosyneGovernanceService {
         ok: false,
         detail: `write persisted but backup failed: ${error instanceof Error ? error.message : String(error)}`,
       };
-      // Amendment 2: explicit metadata-only evidence that a COMMITTED
-      // transaction is temporarily missing its verified backup.
       this.audit({
         type: "governance_backup_failed",
         op,

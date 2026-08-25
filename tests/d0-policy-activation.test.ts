@@ -132,7 +132,6 @@ test("D0: activation is fail-closed without a registered policy and never claims
   assert.equal(refused.status, "refused");
   if (refused.status !== "refused") return;
   assert.ok(refused.issues[0]!.message.includes("not durably registered"));
-  // The domain validator refuses a system-actor confirmed event outright.
   const outcome = handle.store.appendGovernance([
     {
       eventId: "dddd4444-0000-4000-8000-000000000009",
@@ -185,8 +184,6 @@ test("D0 §7.12: individually confirmed cards keep their semantics and outrank p
   assert.equal(confirmedCard.confirmed_by, "owner", "existing confirmation semantics unchanged");
   assert.ok(trustRank({ ...confirmedCard, seal_state: "unsealed" } as never) > 0);
 
-  // Same-title conflict: the individually confirmed card WINS; the
-  // policy-activated one is excluded as outranked (not a dead heat).
   const packet = buildMemoryReadPacket({
     source: handle.store,
     query: "项目标签",
@@ -238,10 +235,7 @@ test("D0 §7.13: explicit new state supersedes an older card without erasing his
   const kernel = await handle.log.readAll();
   const oldHistory = kernel.filter((e) => e.event.memoryId === old.memoryId);
   assert.ok(oldHistory.length >= 2, "history preserved: created + superseded");
-  assert.equal(
-    oldHistory.some((e) => e.event.type === "memory_superseded"),
-    true,
-  );
+  assert.equal(oldHistory.some((e) => e.event.type === "memory_superseded"), true);
 
   const packet = buildMemoryReadPacket({
     source: handle.store,
@@ -353,10 +347,7 @@ test("D0 §7.16: prompt sources are byte-identical and priors untouched across t
   const promptsDir = join(process.cwd(), "prompts");
   const before = new Map<string, string>();
   for (const name of readdirSync(promptsDir)) {
-    before.set(
-      name,
-      createHash("sha256").update(readFileSync(join(promptsDir, name))).digest("hex"),
-    );
+    before.set(name, createHash("sha256").update(readFileSync(join(promptsDir, name))).digest("hex"));
   }
   const { service, handle } = await buildService("prior-safety");
   const priorsBefore = JSON.stringify(handle.store.listPriors());
@@ -412,11 +403,8 @@ test("D0 §7.17: existing pending cards reach typed terminal outcomes without ow
       provenance: { authored_by: "companion", proposed_by: "companion", source_basis: "companion_self" },
     });
     assert.equal(proposed.status, "ok");
-    if (proposed.status === "ok") {
-      cards.push(proposed.memoryId);
-    }
+    if (proposed.status === "ok") cards.push(proposed.memoryId);
   }
-  // Break card #4's source: its transcript turn is gone.
   snapshots.delete(turnUuid(104));
   const results: ModelResult[] = [
     { ok: true, text: '{"basis":"explicit"}', servedModel: "synthetic-model" },
@@ -450,65 +438,37 @@ test("D0 §7.17: existing pending cards reach typed terminal outcomes without ow
   });
 
   assert.equal(outcomes.length, 5);
-  // #0 explicit → activated.
   assert.deepEqual(outcomes[0], { memoryId: cards[0]!, outcome: "policy_activated", basis: "explicit" });
   assert.equal(service.getCard(cards[0]!)!.approval_state, "policy_activated");
   assert.equal(service.getCard(cards[0]!)!.confirmed_by, null);
-  // #1 stale temporal → activated WITH its past expiry, never retrievable.
   assert.equal(outcomes[1]!.outcome, "policy_activated");
-  if (outcomes[1]!.outcome === "policy_activated") {
-    assert.equal(outcomes[1]!.staleTemporal, true);
-  }
+  if (outcomes[1]!.outcome === "policy_activated") assert.equal(outcomes[1]!.staleTemporal, true);
   const staleCard = service.getCard(cards[1]!)!;
   assert.equal(staleCard.approval_state, "policy_activated");
   const staleRow = handle.store.getItem(cards[1]!)!;
   assert.ok(staleRow.expires_at !== null && staleRow.expires_at <= NOW_ISO);
-  const stalePacket = buildMemoryReadPacket({
-    source: handle.store,
-    query: "旧卡1",
-    scene: { mode: "ordinary", intimacyActive: false },
-    nowIso: NOW_ISO,
-  });
+  const stalePacket = buildMemoryReadPacket({ source: handle.store, query: "旧卡1", scene: { mode: "ordinary", intimacyActive: false }, nowIso: NOW_ISO });
   assert.ok(!stalePacket.memories.some((m) => m.id === cards[1]));
-  // #2 inferred → quarantined candidate (stays candidate, out of retrieval).
-  assert.deepEqual(outcomes[2], {
-    memoryId: cards[2]!,
-    outcome: "quarantined_candidate",
-    detail: "inferred_basis",
-  });
+  assert.deepEqual(outcomes[2], { memoryId: cards[2]!, outcome: "quarantined_candidate", detail: "inferred_basis" });
   assert.equal(service.getCard(cards[2]!)!.approval_state, "candidate");
-  // #3 observed → activated, and the projection label reflects the
-  // ACTIVATION basis (observed), never the older draft-time "explicit".
   assert.equal(outcomes[3]!.outcome, "policy_activated");
   assert.equal(handle.store.getItem(cards[3]!)!.source_basis, "observed");
-  const observedPacket = buildMemoryReadPacket({
-    source: handle.store,
-    query: "旧卡3",
-    scene: { mode: "ordinary", intimacyActive: false },
-    nowIso: NOW_ISO,
-  });
+  const observedPacket = buildMemoryReadPacket({ source: handle.store, query: "旧卡3", scene: { mode: "ordinary", intimacyActive: false }, nowIso: NOW_ISO });
   const observedEntry = observedPacket.memories.find((m) => m.id === cards[3]);
   assert.equal(observedEntry?.confidence, "auto:observed", "label never overstates trust");
-  // #4 missing source → quarantined candidate with a typed reason.
   assert.equal(outcomes[4]!.outcome, "quarantined_candidate");
-  if (outcomes[4]!.outcome === "quarantined_candidate") {
-    assert.ok(outcomes[4]!.detail.startsWith("source_invalid:"));
-  }
+  if (outcomes[4]!.outcome === "quarantined_candidate") assert.ok(outcomes[4]!.detail.startsWith("source_invalid:"));
   assert.equal(service.getCard(cards[4]!)!.approval_state, "candidate");
-  // The five cards still EXIST (nothing deleted), and no owner action
-  // was required anywhere in the flow.
-  for (const id of cards) {
-    assert.equal(service.getCard(id)!.lifecycle_state, "active");
-  }
+  for (const id of cards) assert.equal(service.getCard(id)!.lifecycle_state, "active");
   handle.log.close();
 });
 
 // ---- compatibility reader --------------------------------------------------
 
-test("D0: legacy provenance maps through the compatibility reader without rewriting history", async () => {
+test("D0: new writers canonicalize legacy proposal hints while the compatibility reader remains historical", async () => {
   const { service, handle } = await buildService("compat-axes");
-  const legacy = await service.propose({
-    body: "synthetic 一张旧词表卡。",
+  const migrated = await service.propose({
+    body: "synthetic 一张旧词表调用产生的新卡。",
     scope: "relationship",
     sensitivity: "normal",
     importance: 2,
@@ -517,12 +477,19 @@ test("D0: legacy provenance maps through the compatibility reader without rewrit
     executionActor: "system",
     provenance: { source_basis: "owner_requested", requested_by: "owner", authored_by: "companion" },
   });
-  assert.equal(legacy.status, "ok");
-  if (legacy.status !== "ok") return;
-  const roles = parseProvenance(service.getCard(legacy.memoryId)!)!;
-  const axes = deriveProvenanceAxes(roles);
-  assert.equal(axes.proposalOrigin, "owner_request");
-  assert.equal(axes.evidenceBasis, null, "unknown basis stays null — never invented");
+  assert.equal(migrated.status, "ok");
+  if (migrated.status !== "ok") return;
+  const roles = parseProvenance(service.getCard(migrated.memoryId)!)!;
+  assert.equal(roles.source_basis, "explicit", "new writer emits the canonical evidence axis");
+  assert.equal(roles.proposal_origin, "owner_request", "legacy workflow hint becomes proposal_origin");
+  assert.deepEqual(deriveProvenanceAxes(roles), {
+    evidenceBasis: "explicit",
+    proposalOrigin: "owner_request",
+  });
+  assert.deepEqual(deriveProvenanceAxes({ source_basis: "owner_requested", requested_by: "owner" }), {
+    evidenceBasis: null,
+    proposalOrigin: "owner_request",
+  });
   assert.deepEqual(deriveProvenanceAxes({ source_basis: "user_stated", requested_by: "owner" }), {
     evidenceBasis: "explicit",
     proposalOrigin: "owner_request",
@@ -553,12 +520,7 @@ test("D0: the owner can revoke a policy-activated card, and revocation removes i
   assert.equal(revoked.status, "ok");
   const card = service.getCard(auto.memoryId)!;
   assert.equal(card.lifecycle_state, "revoked");
-  const packet = buildMemoryReadPacket({
-    source: handle.store,
-    query: "撤回",
-    scene: { mode: "ordinary", intimacyActive: false },
-    nowIso: NOW_ISO,
-  });
+  const packet = buildMemoryReadPacket({ source: handle.store, query: "撤回", scene: { mode: "ordinary", intimacyActive: false }, nowIso: NOW_ISO });
   assert.deepEqual(packet.memories, []);
   handle.log.close();
 });
