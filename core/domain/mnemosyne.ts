@@ -494,6 +494,10 @@ export function foldMnemosyneEvents(stream: readonly unknown[]): MnemosyneFoldSt
         if (o.approvalState === "candidate") {
           o.approvalState = "policy_activated";
         }
+        // Policy activation is the later authoritative evidence-axis statement
+        // for a policy-activated card. A rebuild must not revive a stale
+        // attributes_set source basis from earlier history.
+        o.sourceBasis = event.sourceBasis;
         o.activation = {
           policyId: event.policyId,
           sourceBasis: event.sourceBasis,

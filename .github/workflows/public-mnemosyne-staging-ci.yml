@@ -3,50 +3,46 @@ name: public-mnemosyne-staging-ci
 on:
   push:
     branches:
-      - public-sync/mnemosyne-v0.1-refresh-20260821
-  pull_request:
-    branches:
-      - historical/mnemosyne-public-staging-wave1-20260818
+      - main
+      - "fix/public-*"
 
 permissions:
   contents: read
 
 concurrency:
-  group: public-mnemosyne-staging-${{ github.ref }}
+  group: public-mnemosyne-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   verify:
-    name: Mnemosyne public candidate verify
+    name: Mnemosyne public verify
     if: >-
-      github.repository == 'Gwendolenmave/delos-for-ame' &&
-      github.event.repository.private == true &&
-      (github.event_name == 'push' ||
-       github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64]
+      github.repository == 'Gwendolenmave/mnemosyne' &&
+      github.event.repository.private == false
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
-      - name: Clear dedicated candidate checkout
+      - name: Clear dedicated verification checkout
         shell: bash
-        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_candidate"
+        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_verify"
 
-      - name: Checkout exact staging head only
+      - name: Checkout exact head only
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
-          path: _public_mnemosyne_candidate
+          ref: ${{ github.sha }}
+          path: _public_mnemosyne_verify
           fetch-depth: 1
           persist-credentials: false
 
       - name: Set up required Node
         uses: actions/setup-node@v4
         with:
-          node-version-file: _public_mnemosyne_candidate/.nvmrc
+          node-version-file: _public_mnemosyne_verify/.nvmrc
 
       - name: Confirm isolated checkout
         shell: bash
-        working-directory: _public_mnemosyne_candidate
+        working-directory: _public_mnemosyne_verify
         run: |
           set -euo pipefail
           node --version
@@ -54,12 +50,12 @@ jobs:
           test "$(git rev-list --all --count)" -eq 1
 
       - name: Install locked dependencies
-        working-directory: _public_mnemosyne_candidate
+        working-directory: _public_mnemosyne_verify
         run: npm ci --ignore-scripts
 
-      - name: Run complete public-candidate verification
+      - name: Run complete public verification
         shell: bash
-        working-directory: _public_mnemosyne_candidate
+        working-directory: _public_mnemosyne_verify
         run: |
           set -euo pipefail
           npm run verify
