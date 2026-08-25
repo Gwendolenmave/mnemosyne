@@ -400,7 +400,7 @@ test("D0 §7.17: existing pending cards reach typed terminal outcomes without ow
       evidence: transcriptEvidence(100 + i),
       proposedBy: "companion",
       executionActor: "system",
-      provenance: { authored_by: "companion", proposed_by: "companion", source_basis: "companion_self" },
+      provenance: { authored_by: "companion", proposed_by: "companion", source_basis: "explicit" },
     });
     assert.equal(proposed.status, "ok");
     if (proposed.status === "ok") cards.push(proposed.memoryId);
