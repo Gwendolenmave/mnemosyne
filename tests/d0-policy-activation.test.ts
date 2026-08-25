@@ -441,20 +441,30 @@ test("D0 §7.17: existing pending cards reach typed terminal outcomes without ow
   assert.deepEqual(outcomes[0], { memoryId: cards[0]!, outcome: "policy_activated", basis: "explicit" });
   assert.equal(service.getCard(cards[0]!)!.approval_state, "policy_activated");
   assert.equal(service.getCard(cards[0]!)!.confirmed_by, null);
-  assert.equal(outcomes[1]!.outcome, "policy_activated");
-  if (outcomes[1]!.outcome === "policy_activated") assert.equal(outcomes[1]!.staleTemporal, true);
-  const staleCard = service.getCard(cards[1]!)!;
-  assert.equal(staleCard.approval_state, "policy_activated");
-  const staleRow = handle.store.getItem(cards[1]!)!;
-  assert.ok(staleRow.expires_at !== null && staleRow.expires_at <= NOW_ISO);
-  const stalePacket = buildMemoryReadPacket({ source: handle.store, query: "旧卡1", scene: { mode: "ordinary", intimacyActive: false }, nowIso: NOW_ISO });
-  assert.ok(!stalePacket.memories.some((m) => m.id === cards[1]));
+
+  // #1 was created from canonical user-statement evidence (explicit), but the
+  // historical classifier now asks to relabel it observed. The governance
+  // writer refuses that contradiction; no expiry or activation is appended.
+  assert.equal(outcomes[1]!.outcome, "failed");
+  if (outcomes[1]!.outcome === "failed") {
+    assert.ok(outcomes[1]!.detail.includes("evidence basis"));
+  }
+  const contradictoryTemporal = service.getCard(cards[1]!)!;
+  assert.equal(contradictoryTemporal.approval_state, "candidate");
+  assert.equal(handle.store.getItem(cards[1]!)!.source_basis, "explicit");
+  assert.equal(handle.store.getItem(cards[1]!)!.expires_at, null);
+
   assert.deepEqual(outcomes[2], { memoryId: cards[2]!, outcome: "quarantined_candidate", detail: "inferred_basis" });
   assert.equal(service.getCard(cards[2]!)!.approval_state, "candidate");
-  // #3 asks to relabel canonical explicit evidence as observed. Evidence is
-  // immutable, so the card remains a candidate and the request fails closed.
-  assert.equal(outcomes[3]!.outcome, "quarantined_candidate");
+
+  // #3 is the same immutable-evidence contradiction without a temporal hint.
+  assert.equal(outcomes[3]!.outcome, "failed");
+  if (outcomes[3]!.outcome === "failed") {
+    assert.ok(outcomes[3]!.detail.includes("evidence basis"));
+  }
+  assert.equal(service.getCard(cards[3]!)!.approval_state, "candidate");
   assert.equal(handle.store.getItem(cards[3]!)!.source_basis, "explicit");
+
   assert.equal(outcomes[4]!.outcome, "quarantined_candidate");
   if (outcomes[4]!.outcome === "quarantined_candidate") assert.ok(outcomes[4]!.detail.startsWith("source_invalid:"));
   assert.equal(service.getCard(cards[4]!)!.approval_state, "candidate");
