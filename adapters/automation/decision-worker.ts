@@ -17,7 +17,16 @@
 import { randomUUID } from "node:crypto";
 import type { ModelProvider } from "../../core/ports/model-provider.js";
 import type { CompanionProposalSink } from "../../core/services/companion-proposal-sink.js";
+import type { ProposalEvidence } from "../../core/services/mnemosyne-governance.js";
 import type { ProvenanceRoles } from "../../core/domain/mnemosyne.js";
+import type { MemoryCreationEvidence } from "../../core/domain/memory.js";
+import {
+  asAssistantInstanceId,
+  asConversationId,
+  asMessageId,
+  asModelFamilyId,
+  asTurnId,
+} from "../../core/domain/ids.js";
 import type { TurnSnapshot } from "../transcripts/local/transcript-query.js";
 import {
   buildLanePrompt,
@@ -28,6 +37,7 @@ import {
   validateClaimEvidence,
   verbatimOverlap,
   VERBATIM_OVERLAP_THRESHOLD,
+  type ClaimEvidence,
   type CompanionDraftQueueEntry,
 } from "./companion-proposals.js";
 import {
@@ -92,6 +102,98 @@ export const DECISION_WORKER_DEFAULT_BUDGET: DecisionWorkerBudget = {
 };
 
 const RETRY_MAX_MS = 6 * 3600_000;
+
+const COMPANION_MEMORY_ORIGIN = {
+  modelFamily: asModelFamilyId("delos"),
+  instanceId: asAssistantInstanceId("companion"),
+};
+
+export type ClaimGroundingResult =
+  | {
+      ok: true;
+      evidence: ProposalEvidence;
+      evidenceBasis: "explicit" | "observed" | "inferred";
+    }
+  | { ok: false; reason: string };
+
+/**
+ * Convert claim-side proof into canonical memory evidence. The governance
+ * writer receives the resulting evidence verbatim and therefore cannot turn
+ * assistant observations or mixed evidence into a user statement.
+ */
+export function buildClaimGrounding(
+  snapshot: TurnSnapshot,
+  claims: readonly ClaimEvidence[],
+  basis: "explicit" | "observed",
+): ClaimGroundingResult {
+  try {
+    const conversationId = asConversationId(snapshot.conversationId);
+    const turnId = asTurnId(snapshot.turnId);
+    const needsUser = claims.some((claim) => claim.evidence_side === "user");
+    const needsAssistant = claims.some((claim) => claim.evidence_side === "assistant");
+    const userRef =
+      needsUser && snapshot.userMessageId !== null
+        ? {
+            kind: "conversation_message" as const,
+            conversationId,
+            turnId,
+            messageId: asMessageId(snapshot.userMessageId),
+            role: "user" as const,
+          }
+        : null;
+    const assistantMessageId = snapshot.assistantMessageId ?? null;
+    const assistantRef =
+      needsAssistant && assistantMessageId !== null
+        ? {
+            kind: "conversation_message" as const,
+            conversationId,
+            turnId,
+            messageId: asMessageId(assistantMessageId),
+            role: "assistant" as const,
+          }
+        : null;
+    if (needsUser && userRef === null) {
+      return { ok: false, reason: "user_message_id_missing" };
+    }
+    if (needsAssistant && assistantRef === null) {
+      return { ok: false, reason: "assistant_message_id_missing" };
+    }
+
+    let evidence: MemoryCreationEvidence;
+    let evidenceBasis: "explicit" | "observed" | "inferred";
+    const pureUserExplicit =
+      basis === "explicit" && claims.every((claim) => claim.evidence_side === "user");
+    const pureAssistantObserved =
+      basis === "observed" && claims.every((claim) => claim.evidence_side === "assistant");
+    if (pureUserExplicit) {
+      evidence = { kind: "user_statement", source: userRef! };
+      evidenceBasis = "explicit";
+    } else if (pureAssistantObserved) {
+      evidence = {
+        kind: "assistant_dialogue",
+        origin: COMPANION_MEMORY_ORIGIN,
+        source: assistantRef!,
+      };
+      evidenceBasis = "observed";
+    } else {
+      evidence = {
+        kind: "model_inference",
+        origin: COMPANION_MEMORY_ORIGIN,
+        derivedFrom: [userRef, assistantRef].filter(
+          (ref): ref is NonNullable<typeof ref> => ref !== null,
+        ),
+      };
+      evidenceBasis = "inferred";
+    }
+    return {
+      ok: true,
+      evidence: { kind: "memory_creation", evidence, sourceTurnId: snapshot.turnId },
+      evidenceBasis,
+    };
+  } catch {
+    return { ok: false, reason: "noncanonical_source_id" };
+  }
+}
 
 /**
  * Policy-activation classification block appended to the proposal drafting
@@ -530,10 +632,22 @@ export class DecisionWorker {
       this.settleRetryable(item, `${generated.errorKind}: ${generated.detail.slice(0, 120)}`);
       return;
     }
-    const servedModel = generated.servedModel ?? null;
+    const servedModel =
+      typeof generated.servedModel === "string" && generated.servedModel.trim().length > 0
+        ? generated.servedModel
+        : null;
+    if (servedModel === null) {
+      this.options.backlog.settleCall(callId, "served_model_unverified", null);
+      this.recordProviderFailure();
+      this.options.backlog.settle(item.identity, "quarantined", {
+        detail: "served_model_unverified",
+      });
+      this.auditOutcome(item, "quarantined", "served_model_unverified");
+      return;
+    }
     this.options.backlog.settleCall(callId, "ok", servedModel);
     this.clearProviderFailures();
-    const generator = servedModel ?? "unverified-model";
+    const generator = servedModel;
 
     const parsed = parseProposalDecision(generated.text);
     if (parsed === null) {
@@ -581,6 +695,21 @@ export class DecisionWorker {
       this.auditOutcome(item, "quarantined", `claim_evidence:${claimResult.reason}`);
       return;
     }
+    const grounding = buildClaimGrounding(snapshot, parsed.claims ?? [], basis);
+    if (!grounding.ok) {
+      this.options.backlog.settle(item.identity, "quarantined", {
+        detail: `claim_evidence:${grounding.reason}`,
+      });
+      this.auditOutcome(item, "quarantined", `claim_evidence:${grounding.reason}`);
+      return;
+    }
+    if (grounding.evidenceBasis !== basis) {
+      this.options.backlog.settle(item.identity, "quarantined", {
+        detail: `claim_evidence:basis_mismatch:${grounding.evidenceBasis}`,
+      });
+      this.auditOutcome(item, "quarantined", `claim_evidence:basis_mismatch:${grounding.evidenceBasis}`);
+      return;
+    }
     let expiresAt: string | undefined;
     if (parsed.validUntil !== undefined) {
       const parsedMs = Date.parse(parsed.validUntil);
@@ -609,7 +738,7 @@ export class DecisionWorker {
     );
     const scope = entry.scene.mode === "au" ? ("au" as const) : (parsed.scope ?? ("relationship" as const));
     const provenance: ProvenanceRoles = {
-      source_basis: basis === "explicit" ? "user_stated" : "companion_self",
+      source_basis: grounding.evidenceBasis,
       proposal_origin: item.origin === "backfill" ? "backfill" : "companion_self",
       authored_by: "companion",
     };
@@ -622,15 +751,7 @@ export class DecisionWorker {
       scope,
       ...(entry.scene.mode === "au" ? { auId: entry.scene.au_id! } : {}),
       sensitivity,
-      evidence:
-        snapshot.userMessageId !== null
-          ? {
-              kind: "transcript",
-              conversationId: item.conversation_id,
-              turnId: item.turn_id,
-              messageId: snapshot.userMessageId,
-            }
-          : { kind: "manual" },
+      evidence: grounding.evidence,
       provenance,
       activation: { policyId, sourceBasis: basis, generator },
       ...(expiresAt !== undefined ? { expiresAt } : {}),

@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { openMnemosyne } from "../adapters/memory/sqlite/mnemosyne-facade.js";
 import { DecisionBacklog } from "../adapters/automation/decision-backlog.js";
 import {
+  buildClaimGrounding,
   DecisionWorker,
   type DecisionWorkerOptions,
 } from "../adapters/automation/decision-worker.js";
@@ -54,6 +55,7 @@ function syntheticSnapshot(i: number, userText?: string, assistantText?: string)
     conversationId: "bbbb2222-0000-4000-8000-000000000001",
     turnId: uuidLike("aaaa1111", i),
     userMessageId: uuidLike("cccc3333", i),
+    assistantMessageId: uuidLike("dddd4444", i),
     userText: userText ?? `synthetic user fact ${i}`,
     assistantText: assistantText ?? `synthetic assistant response ${i}`,
     variantSha256: "v".repeat(64),
@@ -109,7 +111,11 @@ async function buildRig(label: string, options?: {
       provider: {
         generate: async () => {
           calls.push(1);
-          return results.shift() ?? { ok: true, text: '{"decision":"decline","note":"synthetic no"}' };
+          const result =
+            results.shift() ?? { ok: true as const, text: '{"decision":"decline","note":"synthetic no"}' };
+          return result.ok
+            ? { ...result, servedModel: result.servedModel ?? "synthetic-model" }
+            : result;
         },
       },
       persona: { staticPrefix: "SYNTHETIC-PERSONA-CORE", sha256: "p".repeat(64) },
@@ -359,10 +365,79 @@ test("§8.8: new D0 card writes canonical source_basis, not companion_self for e
   assert.equal(card!.approval_state, "policy_activated");
   const provenance = parseProvenance(card!);
   assert.ok(provenance, "provenance must be set");
-  assert.equal(provenance!.source_basis, "user_stated", "explicit must map to user_stated");
+  assert.equal(provenance!.source_basis, "explicit", "new writes use canonical evidence basis");
   assert.equal(provenance!.authored_by, "companion");
   assert.equal(provenance!.proposal_origin, "companion_self");
 
+});
+
+test("§8.8: claim grounding preserves user, assistant, and mixed evidence kinds", () => {
+  const snap = syntheticSnapshot(77, "合成用户明确选择蓝色", "合成助手直接观察到状态稳定");
+  const user = buildClaimGrounding(
+    snap,
+    [{ claim_text: "选择蓝色", basis: "explicit", evidence_side: "user", evidence_excerpt: "选择蓝色" }],
+    "explicit",
+  );
+  assert.equal(user.ok, true);
+  if (user.ok && user.evidence.kind === "memory_creation") {
+    assert.equal(user.evidenceBasis, "explicit");
+    assert.equal(user.evidence.evidence.kind, "user_statement");
+    if (user.evidence.evidence.kind === "user_statement" && user.evidence.evidence.source.kind === "conversation_message") {
+      assert.equal(user.evidence.evidence.source.role, "user");
+      assert.equal(user.evidence.evidence.source.messageId, snap.userMessageId);
+    }
+  }
+
+  const assistant = buildClaimGrounding(
+    snap,
+    [{ claim_text: "状态稳定", basis: "observed", evidence_side: "assistant", evidence_excerpt: "状态稳定" }],
+    "observed",
+  );
+  assert.equal(assistant.ok, true);
+  if (assistant.ok && assistant.evidence.kind === "memory_creation") {
+    assert.equal(assistant.evidenceBasis, "observed");
+    assert.equal(assistant.evidence.evidence.kind, "assistant_dialogue");
+    if (assistant.evidence.evidence.kind === "assistant_dialogue") {
+      assert.equal(assistant.evidence.evidence.source.role, "assistant");
+      assert.equal(assistant.evidence.evidence.source.messageId, snap.assistantMessageId);
+    }
+  }
+
+  const mixed = buildClaimGrounding(
+    snap,
+    [
+      { claim_text: "选择蓝色", basis: "explicit", evidence_side: "user", evidence_excerpt: "选择蓝色" },
+      { claim_text: "状态稳定", basis: "observed", evidence_side: "assistant", evidence_excerpt: "状态稳定" },
+    ],
+    "observed",
+  );
+  assert.equal(mixed.ok, true);
+  if (mixed.ok && mixed.evidence.kind === "memory_creation") {
+    assert.equal(mixed.evidenceBasis, "inferred");
+    assert.equal(mixed.evidence.evidence.kind, "model_inference");
+    if (mixed.evidence.evidence.kind === "model_inference") {
+      assert.deepEqual(
+        mixed.evidence.evidence.derivedFrom?.map((ref) => ref.role).sort(),
+        ["assistant", "user"],
+      );
+    }
+  }
+});
+
+test("§8.8: assistant grounding without assistant message id fails closed", () => {
+  const snap = syntheticSnapshot(78, "synthetic user", "synthetic assistant observation");
+  snap.assistantMessageId = null;
+  const result = buildClaimGrounding(
+    snap,
+    [{
+      claim_text: "assistant observation",
+      basis: "observed",
+      evidence_side: "assistant",
+      evidence_excerpt: "assistant observation",
+    }],
+    "observed",
+  );
+  assert.deepEqual(result, { ok: false, reason: "assistant_message_id_missing" });
 });
 
 test("§8.8: legacy companion_self maps to companion_self origin, null evidence basis", () => {
@@ -457,7 +532,7 @@ test("§8.11: revoke is idempotent — second revoke returns already", async () 
   enqueue(rig, snap);
   const claims: ClaimEvidence[] = [{
     claim_text: "服务处于降级状态",
-    basis: "observed",
+    basis: "explicit",
     evidence_side: "user",
     evidence_excerpt: "合成服务今天处于降级状态",
   }];
@@ -470,7 +545,7 @@ test("§8.11: revoke is idempotent — second revoke returns already", async () 
         title: "合成服务状态",
         scope: "relationship",
         sensitivity: "sensitive",
-        basis: "observed",
+        basis: "explicit",
         claims,
       },
     }),

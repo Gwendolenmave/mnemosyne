@@ -177,6 +177,8 @@ export interface TurnSnapshot {
   conversationId: string;
   turnId: string;
   userMessageId: string | null;
+  /** Optional for compatibility with historical synthetic fixtures. */
+  assistantMessageId?: string | null;
   userText: string | null;
   assistantText: string | null;
   variantSha256: string | null;
@@ -221,6 +223,7 @@ export function findTurnSnapshot(
       conversationId: "",
       turnId,
       userMessageId: null,
+      assistantMessageId: null,
       userText: null,
       assistantText: null,
       variantSha256: null,
@@ -242,6 +245,9 @@ export function findTurnSnapshot(
         }
       } else if (event.type === "assistant_message_persisted" && typeof event.content === "string") {
         snapshot.assistantText = event.content;
+        if (typeof event.message_id === "string") {
+          snapshot.assistantMessageId = event.message_id;
+        }
       } else if (
         event.type === "prompt_variant_selected" &&
         typeof event.variant_sha256 === "string"
@@ -304,6 +310,7 @@ export function findTurnSnapshotDeep(
       conversationId: "",
       turnId,
       userMessageId: null,
+      assistantMessageId: null,
       userText: null,
       assistantText: null,
       variantSha256: null,
@@ -325,6 +332,9 @@ export function findTurnSnapshotDeep(
         }
       } else if (event.type === "assistant_message_persisted" && typeof event.content === "string") {
         snapshot.assistantText = event.content;
+        if (typeof event.message_id === "string") {
+          snapshot.assistantMessageId = event.message_id;
+        }
       } else if (
         event.type === "prompt_variant_selected" &&
         typeof event.variant_sha256 === "string"

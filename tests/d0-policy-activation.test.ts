@@ -451,11 +451,10 @@ test("D0 §7.17: existing pending cards reach typed terminal outcomes without ow
   assert.ok(!stalePacket.memories.some((m) => m.id === cards[1]));
   assert.deepEqual(outcomes[2], { memoryId: cards[2]!, outcome: "quarantined_candidate", detail: "inferred_basis" });
   assert.equal(service.getCard(cards[2]!)!.approval_state, "candidate");
-  assert.equal(outcomes[3]!.outcome, "policy_activated");
-  assert.equal(handle.store.getItem(cards[3]!)!.source_basis, "observed");
-  const observedPacket = buildMemoryReadPacket({ source: handle.store, query: "旧卡3", scene: { mode: "ordinary", intimacyActive: false }, nowIso: NOW_ISO });
-  const observedEntry = observedPacket.memories.find((m) => m.id === cards[3]);
-  assert.equal(observedEntry?.confidence, "auto:observed", "label never overstates trust");
+  // #3 asks to relabel canonical explicit evidence as observed. Evidence is
+  // immutable, so the card remains a candidate and the request fails closed.
+  assert.equal(outcomes[3]!.outcome, "quarantined_candidate");
+  assert.equal(handle.store.getItem(cards[3]!)!.source_basis, "explicit");
   assert.equal(outcomes[4]!.outcome, "quarantined_candidate");
   if (outcomes[4]!.outcome === "quarantined_candidate") assert.ok(outcomes[4]!.detail.startsWith("source_invalid:"));
   assert.equal(service.getCard(cards[4]!)!.approval_state, "candidate");
