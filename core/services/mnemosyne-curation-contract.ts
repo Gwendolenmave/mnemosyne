@@ -13,7 +13,7 @@ export type CurationAction =
   | "MERGE"
   | "REVOKE"
   | "EPISODIC_ONLY"
-  | "NEEDS_GWEN";
+  | "NEEDS_OWNER";
 
 export interface CurationArtifactFile {
   readonly path: string;
@@ -176,9 +176,7 @@ function stringArray(value: unknown, path: string, issues: CurationContractIssue
     issues.push({ path, message: "expected an array of non-empty strings" });
     return [];
   }
-  if (new Set(value).size !== value.length) {
-    issues.push({ path, message: "array entries must be unique" });
-  }
+  if (new Set(value).size !== value.length) issues.push({ path, message: "array entries must be unique" });
   return value as string[];
 }
 
@@ -187,7 +185,6 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
     issues.push({ path, message: "decision row must be an object" });
     return null;
   }
-
   const allowedActions: readonly string[] = [
     "KEEP",
     "REVISE",
@@ -196,14 +193,13 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
     "MERGE",
     "REVOKE",
     "EPISODIC_ONLY",
-    "NEEDS_GWEN",
+    "NEEDS_OWNER",
   ];
   const schema = value.schema;
   const cardId = value.card_id;
   const cardHash = value.original_card_sha256;
   const sourceHash = value.source_turn_sha256;
   const action = value.action;
-
   if (schema !== SCHEMA_ID) issues.push({ path: `${path}.schema`, message: `schema must be ${SCHEMA_ID}` });
   if (typeof cardId !== "string" || cardId.length === 0) issues.push({ path: `${path}.card_id`, message: "card_id required" });
   if (typeof cardHash !== "string" || !SHA256_RE.test(cardHash)) issues.push({ path: `${path}.original_card_sha256`, message: "original card hash must be lowercase sha256" });
@@ -221,19 +217,13 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
   };
 
   const replacementScope = value.replacement_scope;
-  if (replacementScope !== null && replacementScope !== undefined && replacementScope !== "global" && replacementScope !== "relationship" && replacementScope !== "project") {
-    issues.push({ path: `${path}.replacement_scope`, message: "replacement scope must be global|relationship|project|null" });
-  }
+  if (replacementScope !== null && replacementScope !== undefined && replacementScope !== "global" && replacementScope !== "relationship" && replacementScope !== "project") issues.push({ path: `${path}.replacement_scope`, message: "replacement scope must be global|relationship|project|null" });
   const replacementTags = value.replacement_tags;
   if (replacementTags !== undefined && replacementTags !== null) stringArray(replacementTags, `${path}.replacement_tags`, issues);
   const replacementSensitivity = value.replacement_sensitivity;
-  if (replacementSensitivity !== undefined && replacementSensitivity !== null && replacementSensitivity !== "normal" && replacementSensitivity !== "sensitive" && replacementSensitivity !== "intimate") {
-    issues.push({ path: `${path}.replacement_sensitivity`, message: "invalid replacement sensitivity" });
-  }
+  if (replacementSensitivity !== undefined && replacementSensitivity !== null && replacementSensitivity !== "normal" && replacementSensitivity !== "sensitive" && replacementSensitivity !== "intimate") issues.push({ path: `${path}.replacement_sensitivity`, message: "invalid replacement sensitivity" });
   const replacementImportance = value.replacement_importance;
-  if (replacementImportance !== undefined && replacementImportance !== null && replacementImportance !== 1 && replacementImportance !== 2 && replacementImportance !== 3) {
-    issues.push({ path: `${path}.replacement_importance`, message: "replacement importance must be 1|2|3|null" });
-  }
+  if (replacementImportance !== undefined && replacementImportance !== null && replacementImportance !== 1 && replacementImportance !== 2 && replacementImportance !== 3) issues.push({ path: `${path}.replacement_importance`, message: "replacement importance must be 1|2|3|null" });
 
   const supersedes = stringArray(value.supersedes_card_ids ?? [], `${path}.supersedes_card_ids`, issues);
   const merge = stringArray(value.merge_card_ids ?? [], `${path}.merge_card_ids`, issues);
@@ -246,14 +236,12 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
 
   let consolidation: CurationConsolidationDirection | undefined;
   if (value.consolidation !== undefined) {
-    if (!isRecord(value.consolidation)) {
-      issues.push({ path: `${path}.consolidation`, message: "consolidation must be an object" });
-    } else {
+    if (!isRecord(value.consolidation)) issues.push({ path: `${path}.consolidation`, message: "consolidation must be an object" });
+    else {
       const survivor = value.consolidation.survivor_card_id;
       const sources = stringArray(value.consolidation.source_card_ids, `${path}.consolidation.source_card_ids`, issues);
-      if (typeof survivor !== "string" || survivor.length === 0) {
-        issues.push({ path: `${path}.consolidation.survivor_card_id`, message: "survivor_card_id required" });
-      } else {
+      if (typeof survivor !== "string" || survivor.length === 0) issues.push({ path: `${path}.consolidation.survivor_card_id`, message: "survivor_card_id required" });
+      else {
         if (sources.includes(survivor)) issues.push({ path: `${path}.consolidation`, message: "survivor cannot also be a source" });
         consolidation = { survivor_card_id: survivor, source_card_ids: sources };
       }
@@ -262,18 +250,15 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
 
   let amends: CurationDecisionAmends | undefined;
   if (value.amends !== undefined) {
-    if (!isRecord(value.amends)) {
-      issues.push({ path: `${path}.amends`, message: "amends must be an object" });
-    } else {
+    if (!isRecord(value.amends)) issues.push({ path: `${path}.amends`, message: "amends must be an object" });
+    else {
       const decisionCommit = value.amends.decision_commit;
       const decisionFile = value.amends.decision_file;
       const priorReviewedAt = value.amends.reviewed_at;
       if (typeof decisionCommit !== "string" || !COMMIT_RE.test(decisionCommit)) issues.push({ path: `${path}.amends.decision_commit`, message: "full decision commit sha required" });
       if (typeof decisionFile !== "string" || decisionFile.length === 0) issues.push({ path: `${path}.amends.decision_file`, message: "decision_file required" });
       if (!isIsoTimestamp(priorReviewedAt)) issues.push({ path: `${path}.amends.reviewed_at`, message: "prior reviewed_at required" });
-      if (typeof decisionCommit === "string" && typeof decisionFile === "string" && typeof priorReviewedAt === "string") {
-        amends = { decision_commit: decisionCommit, decision_file: decisionFile, reviewed_at: priorReviewedAt };
-      }
+      if (typeof decisionCommit === "string" && typeof decisionFile === "string" && typeof priorReviewedAt === "string") amends = { decision_commit: decisionCommit, decision_file: decisionFile, reviewed_at: priorReviewedAt };
     }
   }
 
@@ -281,9 +266,7 @@ function parseRow(value: unknown, path: string, expectAmendment: boolean, issues
     if (amends === undefined) issues.push({ path: `${path}.amends`, message: "amendment must bind an exact prior decision" });
     if (typeof value.amendment_reason !== "string" || value.amendment_reason.trim().length === 0) issues.push({ path: `${path}.amendment_reason`, message: "amendment_reason required" });
     if (!isIsoTimestamp(value.amended_at)) issues.push({ path: `${path}.amended_at`, message: "valid amended_at required" });
-  } else if (amends !== undefined) {
-    issues.push({ path: `${path}.amends`, message: "historical decision files cannot contain amendment rows" });
-  }
+  } else if (amends !== undefined) issues.push({ path: `${path}.amends`, message: "historical decision files cannot contain amendment rows" });
 
   if (action === "REVISE" && (typeof value.replacement_body !== "string" || value.replacement_body.trim().length === 0)) issues.push({ path: `${path}.replacement_body`, message: "REVISE requires a non-empty replacement body" });
   if (action === "REVISE" && value.replacement_au_id !== null && value.replacement_au_id !== undefined) issues.push({ path: `${path}.replacement_au_id`, message: "REVISE cannot invent AU identity; use RECLASSIFY_AU" });
@@ -412,7 +395,7 @@ export function preflightCurationDecisionSet(bundle: CurationDecisionSetBundle):
     if (evidence.originalCardSha256 !== chosenRow.original_card_sha256) issues.push({ path: `evidenceIndex.cards.${cardId}.originalCardSha256`, message: "original-card hash mismatch" });
     if (evidence.sourceTurnSha256 !== chosenRow.source_turn_sha256) issues.push({ path: `evidenceIndex.cards.${cardId}.sourceTurnSha256`, message: "source-turn hash mismatch" });
     if (evidenceBasis(evidence.evidence) === null) issues.push({ path: `evidenceIndex.cards.${cardId}.evidence`, message: "curation evidence must resolve to explicit|observed" });
-    if (chosenRow.action === "NEEDS_GWEN") issues.push({ path: `decisions.${cardId}.action`, message: "NEEDS_GWEN is a preflight blocker and cannot be applied" });
+    if (chosenRow.action === "NEEDS_OWNER") issues.push({ path: `decisions.${cardId}.action`, message: "NEEDS_OWNER is a preflight blocker and cannot be applied" });
 
     const participants = chosenRow.action === "SUPERSEDE" || chosenRow.action === "MERGE"
       ? [...(chosenRow.consolidation?.source_card_ids ?? []), ...(chosenRow.consolidation === undefined ? [] : [chosenRow.consolidation.survivor_card_id])]
