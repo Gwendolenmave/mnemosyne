@@ -43,6 +43,10 @@ import {
 } from "../domain/mnemosyne.js";
 import { assessUntrustedBody, estimateTokens } from "./anamnesis.js";
 import {
+  planPolicyActivatedAuReclassification,
+  type PolicyAuReclassificationCard,
+} from "./policy-au-reclassification.js";
+import {
   planPolicyActivatedMerge,
   planPolicyActivatedSupersede,
   type PolicyConsolidationCard,
@@ -478,6 +482,23 @@ function policyConsolidationCard(item: GovernanceItemView): PolicyConsolidationC
     supersededByMemoryId: item.supersedes ?? null,
     sourceBasis: item.source_basis ?? null,
     confirmedBy: item.confirmed_by,
+  };
+}
+
+function policyAuReclassificationCard(item: GovernanceItemView): PolicyAuReclassificationCard {
+  return {
+    id: item.id,
+    title: item.title,
+    tags: item.tags_text.split(" ").filter((tag) => tag.length > 0),
+    approvalState: item.approval_state,
+    lifecycleState: item.lifecycle_state,
+    sourceBasis: item.source_basis ?? null,
+    provenanceSourceBasis: deriveProvenanceAxes(parseProvenance(item)).evidenceBasis,
+    confirmedBy: item.confirmed_by,
+    scope: item.scope,
+    auId: item.au_id,
+    sensitivity: item.sensitivity,
+    importance: item.importance,
   };
 }
 
@@ -1250,6 +1271,45 @@ export class MnemosyneGovernanceService {
         : {}),
       token_estimate: estimateTokens(body),
     });
+  }
+
+  /**
+   * Governed exact-AU reclassification for one active policy-activated card.
+   * The pure planner owns fail-closed validation and replay rules; this service
+   * remains the sole mutation authority and commits governance events only.
+   */
+  async reclassifyPolicyActivatedAu(
+    memoryId: string,
+    auId: string,
+    by: "owner" | "companion",
+  ): Promise<GovernanceOutcome<GovernanceWriteReceipt>> {
+    const item = this.store.getItem(memoryId);
+    if (item === undefined) {
+      return { status: "refused", issues: [{ path: "memoryId", message: "no such card" }] };
+    }
+    const outcome = planPolicyActivatedAuReclassification({
+      card: policyAuReclassificationCard(item),
+      auId,
+      by,
+      now: this.now(),
+    });
+    if (outcome.status === "already") {
+      return { status: "already", detail: outcome.detail };
+    }
+    if (outcome.status === "refused") {
+      return { status: "refused", issues: outcome.issues.map((issue) => ({ ...issue })) };
+    }
+    return this.commit(
+      "reclassify_policy_activated_au",
+      memoryId,
+      [],
+      [...outcome.plan.governance],
+      {
+        by,
+        au_id: outcome.plan.auId,
+        source_basis: outcome.plan.sourceBasis,
+      },
+    );
   }
 
   /**
