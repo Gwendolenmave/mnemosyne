@@ -180,6 +180,42 @@ export interface PolicyRevisionRecordedEvent {
   preconditionDigest: string;
 }
 
+/** Applied curation actions that may receive durable replay receipts. */
+export type CurationRecordedAction =
+  | "KEEP"
+  | "REVISE"
+  | "RECLASSIFY_AU"
+  | "SUPERSEDE"
+  | "MERGE"
+  | "REVOKE"
+  | "EPISODIC_ONLY";
+
+/**
+ * Metadata-only receipt for one frozen curation decision. It never changes
+ * current memory projection state; semantic mutations remain the governance
+ * service's responsibility.
+ */
+export interface CurationDecisionRecordedEvent {
+  type: "curation_decision_recorded";
+  memoryId: string;
+  decisionId: string;
+  decisionSetId: string;
+  action: CurationRecordedAction;
+  targetDigest: string;
+  preconditionDigest: string;
+}
+
+/**
+ * Metadata-only completion receipt for an entire reviewed decision set.
+ * It is written only after every decision has a matching durable receipt.
+ */
+export interface CurationBatchRecordedEvent {
+  type: "curation_batch_recorded";
+  decisionSetId: string;
+  decisionSetSha256: string;
+  decisionIds: string[];
+}
+
 /**
  * Durable owner policy (work order §5.1): stored as governance authority
  * in the event stream, not inferred from an environment flag. The actor
@@ -221,6 +257,8 @@ export type MnemosyneEvent =
   | RetrievalSetEvent
   | PolicyActivatedEvent
   | PolicyRevisionRecordedEvent
+  | CurationDecisionRecordedEvent
+  | CurationBatchRecordedEvent
   | OwnerPolicySetEvent
   | PriorProposedEvent
   | PriorApprovedEvent;
@@ -250,6 +288,15 @@ const PROVENANCE_SOURCE_BASES: readonly string[] = [
   "owner_requested",
   "companion_self",
   "muse_suggestion",
+];
+const CURATION_RECORDED_ACTIONS: readonly string[] = [
+  "KEEP",
+  "REVISE",
+  "RECLASSIFY_AU",
+  "SUPERSEDE",
+  "MERGE",
+  "REVOKE",
+  "EPISODIC_ONLY",
 ];
 const HUMAN_ONLY_TYPES: readonly string[] = [
   "confirmed",
@@ -368,6 +415,39 @@ export function validateMnemosyneStream(
           issues.push({ path: `${path}.sourceSha256`, message: "sourceSha256 must be lowercase sha256 hex" });
         if (typeof e.preconditionDigest !== "string" || !SHA256_RE.test(e.preconditionDigest))
           issues.push({ path: `${path}.preconditionDigest`, message: "preconditionDigest must be lowercase sha256 hex" });
+        break;
+      }
+      case "curation_decision_recorded": {
+        const e = event as Partial<CurationDecisionRecordedEvent>;
+        if (typeof e.memoryId !== "string" || e.memoryId.length === 0)
+          issues.push({ path: `${path}.memoryId`, message: "memoryId required" });
+        if (typeof e.decisionId !== "string" || !SHA256_RE.test(e.decisionId))
+          issues.push({ path: `${path}.decisionId`, message: "decisionId must be lowercase sha256 hex" });
+        if (typeof e.decisionSetId !== "string" || !SHA256_RE.test(e.decisionSetId))
+          issues.push({ path: `${path}.decisionSetId`, message: "decisionSetId must be lowercase sha256 hex" });
+        if (typeof e.action !== "string" || !CURATION_RECORDED_ACTIONS.includes(e.action))
+          issues.push({ path: `${path}.action`, message: "invalid applied curation action" });
+        if (typeof e.targetDigest !== "string" || !SHA256_RE.test(e.targetDigest))
+          issues.push({ path: `${path}.targetDigest`, message: "targetDigest must be lowercase sha256 hex" });
+        if (typeof e.preconditionDigest !== "string" || !SHA256_RE.test(e.preconditionDigest))
+          issues.push({ path: `${path}.preconditionDigest`, message: "preconditionDigest must be lowercase sha256 hex" });
+        break;
+      }
+      case "curation_batch_recorded": {
+        const e = event as Partial<CurationBatchRecordedEvent>;
+        if (typeof e.decisionSetId !== "string" || !SHA256_RE.test(e.decisionSetId))
+          issues.push({ path: `${path}.decisionSetId`, message: "decisionSetId must be lowercase sha256 hex" });
+        if (typeof e.decisionSetSha256 !== "string" || !SHA256_RE.test(e.decisionSetSha256))
+          issues.push({ path: `${path}.decisionSetSha256`, message: "decisionSetSha256 must be lowercase sha256 hex" });
+        if (
+          !Array.isArray(e.decisionIds) ||
+          e.decisionIds.length === 0 ||
+          e.decisionIds.some((decisionId) => typeof decisionId !== "string" || !SHA256_RE.test(decisionId))
+        ) {
+          issues.push({ path: `${path}.decisionIds`, message: "decisionIds must be a non-empty sha256[]" });
+        } else if (new Set(e.decisionIds).size !== e.decisionIds.length) {
+          issues.push({ path: `${path}.decisionIds`, message: "decisionIds must be unique" });
+        }
         break;
       }
       case "owner_policy_set": {
@@ -583,7 +663,9 @@ export function foldMnemosyneEvents(stream: readonly unknown[]): MnemosyneFoldSt
         break;
       }
       case "policy_revision_recorded":
-        // Metadata-only durable replay receipt; never changes projection.
+      case "curation_decision_recorded":
+      case "curation_batch_recorded":
+        // Metadata-only durable replay receipts; never change projections.
         break;
       case "owner_policy_set":
         policies.set(event.policyId, {
