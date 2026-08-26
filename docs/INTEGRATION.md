@@ -19,7 +19,9 @@ The root package exports stable domains and namespaced subsystems:
 | `MemoryDomain` / `MnemosyneDomain` | Memory events, lifecycle, provenance, owner policy, and folds |
 | `EpisodeDomain` / `EpisodePass1Domain` / `EpisodePass2Domain` | Transcript-derived episode contracts |
 | `Anamnesis` | Eligibility, ranking, budgets, read packets, and safe rendering |
-| `Governance` | Governed proposal, activation, revision, sealing, revocation, and owner actions |
+| `Governance` | Governed proposal, activation, revision, sealing, revocation, consolidation, and owner actions |
+| `Curation` | Hash-bound formal decision sets, replay-aware applicator contracts, and governance-writer adapter |
+| `Retention` | Portable retention vocabulary, validation, and pre-admission dispatcher |
 | `ContextAssembly` | Context and injection boundary contracts |
 | `Backup` / `BackupRuntime` | Retention decisions, encrypted packages, restore proof, and pruning |
 | `Deletion` | Authorized deletion and derived-store safety |
@@ -30,8 +32,10 @@ The root package exports stable domains and namespaced subsystems:
 | `TelegramGovernance` | Governance-oriented Telegram adapter contracts |
 | `MUSE_NAMES`, `MUSE_LENSES`, and Musagetes functions | Normative mythology and intent composition |
 
-Subpath exports exist for hosts that need narrower contracts, but the root
-namespaces are the preferred discovery surface.
+The root namespaces are the preferred stable discovery surface. Narrow subpath
+exports exist for advanced integrations, but host code should not treat the
+current internal service-file layout as a compatibility promise when a root
+concept exists.
 
 ## Host responsibilities
 
@@ -55,7 +59,11 @@ A real integration must supply and own:
 7. **Provider adapter.** If model-assisted candidate generation or Episode Pass
    2 is used, inject a provider through the port. Core memory and retrieval do
    not select credentials or open a provider connection.
-8. **Operational cadence.** Run backup, restore drills, health checks, and
+8. **Retention before admission.** If a host uses the portable retention mode,
+   classify evidence through `Retention` before ordinary long-term candidate
+   admission. Session-only, episodic, quarantine, and correction destinations
+   are not ordinary long-term candidates.
+9. **Operational cadence.** Run backup, restore drills, health checks, and
    backlog workers from an explicit host scheduler. Do not depend on a user
    remembering to inspect a dashboard.
 
@@ -95,6 +103,7 @@ Always close the returned SQLite log handle during host shutdown.
 
 ```text
 candidate source
+  -> retention/admission decision at the host boundary
   -> stable evidence pointer + expected hash
   -> durable decision backlog
   -> evidence reread and hash verification
@@ -108,6 +117,16 @@ candidate source
 The host must not bypass this path by letting a model call the event log or
 SQLite adapter directly. A candidate generator proposes; the governance
 service decides what operation is admissible under the registered policy.
+
+## Formal curation boundary
+
+`Curation` exposes the reviewed decision-set contract, replay-aware applicator,
+and governance-writer adapter as one stable package concept. Curation decisions
+are hash- and precondition-bound. Exact replay is a no-op, stale or conflicting
+identities fail closed, and semantic changes plus durable receipts still pass
+through the single Mnemosyne governance writer. `EPISODIC_ONLY` preserves
+historical/evidence value while removing the item from ordinary long-term
+retrieval; it is not physical deletion.
 
 ## Read path
 
@@ -141,8 +160,8 @@ Pass 2 produce versioned, source-hashed, rebuildable projections. An episode
 summary or claim is not automatically a Memory Card.
 
 If the host wants an episode-derived fact to become durable memory, it must
-enter the same evidence, candidate, policy, and governance path as any other
-automatic proposal.
+enter the same retention, evidence, candidate, policy, and governance path as
+any other automatic proposal.
 
 ## Backup, restore, and health
 
@@ -173,9 +192,10 @@ any production swap. The host owns the atomic cutover and rollback boundary.
 
 ## Delos composition
 
-Delos may call Mnemosyne through the root contracts without making Mnemosyne a
+Delos calls Mnemosyne through the root contracts without making Mnemosyne a
 Delos-internal namespace. Delos remains responsible for conversation surfaces,
-provider routing, persona content, Current Situation, and the live Transcript
-Evidence Archive. Mnemosyne remains responsible for governed durable memory,
-Anamnesis recall, Lethe lifecycle, decision durability, and its rebuildable
+provider routing, persona content, Current Situation, transcript evidence, and
+host-side admission routing. Mnemosyne remains responsible for governed durable
+memory, Anamnesis recall, Lethe lifecycle, curation/governance semantics,
+portable retention vocabulary, decision durability, and rebuildable
 projections.
