@@ -53,6 +53,7 @@ Mnemosyne 最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但
 这个例子基本已经包含了整套设计：
 
 - **Evidence 不会自动变成 memory。** Transcript 里出现过，不代表它就是持久事实。
+- **先判断该活多久，再判断能不能进入 long-term。** Session-only 和 episodic material 不会仅因为同时看起来像 preference、relationship 或 project fact 就被误升成长记忆。
 - **先判断有没有资格出现，再谈排序。** Scope、lifecycle、authority、sensitivity、expiry、关系/项目/AU 边界和 retrieval permission 先决定“能不能出现”。
 - **旧事实可以被 supersede，而不是直接抹掉。** 当前 truth 会更新，历史仍然可追。
 - **Index 是可重建的。** Durable event history 才是 authority；当前 view 和 search projection 都是派生状态。
@@ -89,13 +90,20 @@ npm run verify
 
 Mnemosyne 刻意**不拥有**你的 provider、transcript transport、clock、backup destination、audit sink 或 deployment policy。这些边界都由 host 提供。
 
-Package 从一个 ESM 入口暴露 storage、governance、recall、decision 与 automation 组件：
+Package 通过一个 ESM 根入口暴露稳定的 storage、governance、curation、retention、recall、decision 与 automation 概念。优先使用 `Governance`、`Curation`、`Retention`、`Anamnesis`、`SqliteMnemosyne` 这些 package-root namespace，而不是把单个内部 service 文件路径当成兼容性承诺。
 
 ```ts
 import {
   Anamnesis,
+  Retention,
   SqliteMnemosyne,
 } from "@delos/mnemosyne";
+
+const retention = Retention.dispatchPortableRetention({
+  schemaVersion: 1,
+  evidenceCodes: ["stable_preference"],
+  auId: null,
+});
 
 const handle = SqliteMnemosyne.openMnemosyne("./local-state/mnemosyne.db");
 
@@ -107,7 +115,7 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-这段只展示 read side 的形状。完整可运行的 governed write + recall 例子在 [`examples/local-flow.ts`](examples/local-flow.ts)。接真实 evidence 或 live transport 前，请先读 [Integration](docs/INTEGRATION.md)。
+这段只展示 retention classification 和 read side 的形状。完整可运行的 governed write + recall 例子在 [`examples/local-flow.ts`](examples/local-flow.ts)。接真实 evidence 或 live transport 前，请先读 [Integration](docs/INTEGRATION.md)。
 
 ## 这些名字分别负责什么
 
@@ -127,8 +135,10 @@ const packet = Anamnesis.buildMemoryReadPacket({
 
 Mnemosyne **会做**：
 
-- 带 provenance、policy / confirmation 边界的 governed memory write；
+- 带 canonical evidence、provenance、policy / confirmation 边界的 governed memory write；
 - revision、expiry、revocation、supersession、retrieval disablement 和授权删除等 lifecycle 操作；
+- 通过唯一 governance writer 执行 replay-safe 的 policy repair 和 formal curation；
+- 通过 portable retention contract 让短生命周期 / episodic evidence 在 ordinary long-term admission 之前停下来；
 - 先做 eligibility 过滤，再进行 similarity / ranking 的 recall；
 - append-only event authority，以及可重建的当前 view / index；
 - metadata-only audit，避免诊断日志偷偷变成第二套 memory store。
@@ -146,6 +156,10 @@ Mnemosyne **不会做**：
 公开仓库只包含源码、公开文档、schema 和明确的合成 fixture。真实运行时数据应该留在仓库之外，包括 memory database、transcript、queue、log、backup、prompt、provider response、credential、账号标识和机器路径。
 
 网络行为也属于 host 边界：Mnemosyne 是 library，不是云服务。仓库 / runtime / network 的完整划分见 [Privacy model](docs/PRIVACY-MODEL.md)。
+
+## 公开状态边界
+
+当前文档和测试只描述**真正已经合并到这个 public repository 的行为**，不会再把 compatibility 当成“当前 private parity”的简称。Spec、source bytes、tests、merge state、package publication 和 live deployment 是不同状态。Embedding / vector / hybrid retrieval 明确不属于当前这轮 non-embedding governance / retention parity；当前公开矩阵见 [Status](docs/STATUS.md)。
 
 ## 如果你要改代码
 
