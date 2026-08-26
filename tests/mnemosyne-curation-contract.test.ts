@@ -54,12 +54,8 @@ function decisionRow(action: CurationAction, cardId: string): Record<string, unk
     base.replacement_tags = ["revised", "synthetic"];
   }
   if (action === "RECLASSIFY_AU") base.replacement_au_id = "synthetic-au";
-  if (action === "SUPERSEDE") {
-    base.consolidation = { source_card_ids: [cardId], survivor_card_id: `${cardId}-survivor` };
-  }
-  if (action === "MERGE") {
-    base.consolidation = { source_card_ids: [cardId, `${cardId}-source-2`], survivor_card_id: `${cardId}-survivor` };
-  }
+  if (action === "SUPERSEDE") base.consolidation = { source_card_ids: [cardId], survivor_card_id: `${cardId}-survivor` };
+  if (action === "MERGE") base.consolidation = { source_card_ids: [cardId, `${cardId}-source-2`], survivor_card_id: `${cardId}-survivor` };
   return base;
 }
 
@@ -165,8 +161,8 @@ test("curation contract fails the entire set on hash mismatch or ambiguous conso
   if (!ambiguityResult.ok) assert.ok(ambiguityResult.issues.some((issue) => issue.message.includes("explicit source/survivor orientation")));
 });
 
-test("NEEDS_GWEN and conflicting participant ownership are hard preflight blockers", () => {
-  const needs = decisionRow("NEEDS_GWEN", "card-needs-owner");
+test("NEEDS_OWNER and conflicting participant ownership are hard preflight blockers", () => {
+  const needs = decisionRow("NEEDS_OWNER", "card-needs-owner");
   const blocked = preflightCurationDecisionSet(buildBundle([needs]));
   assert.equal(blocked.ok, false);
   if (!blocked.ok) assert.ok(blocked.issues.some((issue) => issue.message.includes("preflight blocker")));
