@@ -42,6 +42,11 @@ import {
   type ProvenanceRoles,
 } from "../domain/mnemosyne.js";
 import { assessUntrustedBody, estimateTokens } from "./anamnesis.js";
+import {
+  planPolicyActivatedMerge,
+  planPolicyActivatedSupersede,
+  type PolicyConsolidationCard,
+} from "./policy-card-consolidation.js";
 
 export type HumanActor = "owner" | "companion" | "both";
 
@@ -79,6 +84,8 @@ export interface GovernanceItemView {
   lifecycle_state: string;
   confirmed_by: string | null;
   retrieval: string;
+  /** Projected replacement pointer when this card has been superseded. */
+  supersedes?: string | null;
   /** Canonical evidence basis projected from governance events. */
   source_basis?: string | null;
   tags_text: string;
@@ -268,6 +275,17 @@ function resolveEvidence(
       issues: [{ path: "evidence", message: "proposal evidence contains an invalid canonical identity" }],
     };
   }
+}
+
+function policyConsolidationCard(item: GovernanceItemView): PolicyConsolidationCard {
+  return {
+    id: item.id,
+    approvalState: item.approval_state,
+    lifecycleState: item.lifecycle_state,
+    supersededByMemoryId: item.supersedes ?? null,
+    sourceBasis: item.source_basis ?? null,
+    confirmedBy: item.confirmed_by,
+  };
 }
 
 export class MnemosyneGovernanceService {
@@ -778,6 +796,18 @@ export class MnemosyneGovernanceService {
         issues: [{ path: "memoryId", message: "card is confirmed — use revise instead" }],
       };
     }
+    if (item.approval_state !== "candidate") {
+      return {
+        status: "refused",
+        issues: [
+          {
+            path: "memoryId",
+            message:
+              "pending edit applies only to candidate cards; policy-activated cards require the governed policy-card repair path",
+          },
+        ],
+      };
+    }
     return this.reviseKernel("edit", item, newBody, editedBy, newTitle, null, provenanceDelta, attrs);
   }
 
@@ -798,6 +828,105 @@ export class MnemosyneGovernanceService {
       };
     }
     return this.reviseKernel("revise", item, newBody, by === "both" ? "owner" : by, newTitle, by);
+  }
+
+  /**
+   * Governed append-only replacement of one policy-activated card by an
+   * already retrieval-authorised survivor. The pure planner owns validation
+   * and replay rules; this service remains the single mutation authority.
+   */
+  async supersedePolicyActivated(
+    sourceMemoryId: string,
+    survivorMemoryId: string,
+    by: "owner" | "companion",
+    reason: string,
+  ): Promise<GovernanceOutcome<GovernanceWriteReceipt>> {
+    const source = this.store.getItem(sourceMemoryId);
+    if (source === undefined) {
+      return { status: "refused", issues: [{ path: "sourceMemoryId", message: "no such source card" }] };
+    }
+    const survivor = this.store.getItem(survivorMemoryId);
+    if (survivor === undefined) {
+      return { status: "refused", issues: [{ path: "survivorMemoryId", message: "no such survivor card" }] };
+    }
+    const outcome = planPolicyActivatedSupersede({
+      source: policyConsolidationCard(source),
+      survivor: policyConsolidationCard(survivor),
+      by,
+      reason,
+      now: this.now(),
+    });
+    if (outcome.status === "already") {
+      return { status: "already", detail: outcome.detail };
+    }
+    if (outcome.status === "refused") {
+      return { status: "refused", issues: outcome.issues.map((issue) => ({ ...issue })) };
+    }
+    return this.commit(
+      "supersede_policy_activated",
+      sourceMemoryId,
+      [...outcome.plan.kernel],
+      [...outcome.plan.governance],
+      {
+        by,
+        source_memory_ids: [...outcome.plan.sourceMemoryIds],
+        survivor_memory_id: outcome.plan.survivorMemoryId,
+      },
+    );
+  }
+
+  /**
+   * Governed N-to-1 consolidation of policy-activated source cards. Sources
+   * already terminal to this exact survivor are skipped; conflicting terminal
+   * history fails closed before the single joint append.
+   */
+  async mergePolicyActivated(
+    sourceMemoryIds: readonly string[],
+    survivorMemoryId: string,
+    by: "owner" | "companion",
+    reason: string,
+  ): Promise<GovernanceOutcome<GovernanceWriteReceipt>> {
+    const survivor = this.store.getItem(survivorMemoryId);
+    if (survivor === undefined) {
+      return { status: "refused", issues: [{ path: "survivorMemoryId", message: "no such survivor card" }] };
+    }
+    const sources: GovernanceItemView[] = [];
+    const missing: GovernanceIssue[] = [];
+    sourceMemoryIds.forEach((memoryId, index) => {
+      const source = this.store.getItem(memoryId);
+      if (source === undefined) {
+        missing.push({ path: `sourceMemoryIds[${index}]`, message: "no such source card" });
+      } else {
+        sources.push(source);
+      }
+    });
+    if (missing.length > 0) {
+      return { status: "refused", issues: missing };
+    }
+    const outcome = planPolicyActivatedMerge({
+      sources: sources.map(policyConsolidationCard),
+      survivor: policyConsolidationCard(survivor),
+      by,
+      reason,
+      now: this.now(),
+    });
+    if (outcome.status === "already") {
+      return { status: "already", detail: outcome.detail };
+    }
+    if (outcome.status === "refused") {
+      return { status: "refused", issues: outcome.issues.map((issue) => ({ ...issue })) };
+    }
+    return this.commit(
+      "merge_policy_activated",
+      survivorMemoryId,
+      [...outcome.plan.kernel],
+      [...outcome.plan.governance],
+      {
+        by,
+        source_memory_ids: [...outcome.plan.sourceMemoryIds],
+        survivor_memory_id: outcome.plan.survivorMemoryId,
+      },
+    );
   }
 
   /** Shared revision path; confirmWith re-anchors approval atomically. */
