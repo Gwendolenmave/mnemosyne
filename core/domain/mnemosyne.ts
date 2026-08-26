@@ -166,6 +166,21 @@ export interface PolicyActivatedEvent {
 }
 
 /**
+ * Immutable metadata-only receipt for one reviewed policy-card revision.
+ * It is appended atomically with the revision and deliberately has no fold
+ * effect. Durable history can therefore resolve exact replay before creating
+ * timestamps/UUIDs or touching projections/backups/audit sinks.
+ */
+export interface PolicyRevisionRecordedEvent {
+  type: "policy_revision_recorded";
+  memoryId: string;
+  decisionId: string;
+  targetDigest: string;
+  sourceSha256: string;
+  preconditionDigest: string;
+}
+
+/**
  * Durable owner policy (work order §5.1): stored as governance authority
  * in the event stream, not inferred from an environment flag. The actor
  * is "system" recording a standing owner ruling; authorityRef pins the
@@ -205,6 +220,7 @@ export type MnemosyneEvent =
   | ExpirySetEvent
   | RetrievalSetEvent
   | PolicyActivatedEvent
+  | PolicyRevisionRecordedEvent
   | OwnerPolicySetEvent
   | PriorProposedEvent
   | PriorApprovedEvent;
@@ -242,6 +258,7 @@ const HUMAN_ONLY_TYPES: readonly string[] = [
   "retrieval_set",
   "prior_approved",
 ];
+const SHA256_RE = /^[0-9a-f]{64}$/u;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -331,6 +348,26 @@ export function validateMnemosyneStream(
           issues.push({ path: `${path}.sourceBasis`, message: "sourceBasis must be explicit|observed" });
         if (typeof e.generator !== "string" || e.generator.length === 0)
           issues.push({ path: `${path}.generator`, message: "generator identity required" });
+        break;
+      }
+      case "policy_revision_recorded": {
+        const e = event as Partial<PolicyRevisionRecordedEvent>;
+        if (typeof e.memoryId !== "string" || e.memoryId.length === 0)
+          issues.push({ path: `${path}.memoryId`, message: "memoryId required" });
+        if (
+          typeof e.decisionId !== "string" ||
+          e.decisionId.length === 0 ||
+          e.decisionId.length > 200 ||
+          e.decisionId !== e.decisionId.trim()
+        ) {
+          issues.push({ path: `${path}.decisionId`, message: "decisionId must be a trimmed 1..200 char string" });
+        }
+        if (typeof e.targetDigest !== "string" || !SHA256_RE.test(e.targetDigest))
+          issues.push({ path: `${path}.targetDigest`, message: "targetDigest must be lowercase sha256 hex" });
+        if (typeof e.sourceSha256 !== "string" || !SHA256_RE.test(e.sourceSha256))
+          issues.push({ path: `${path}.sourceSha256`, message: "sourceSha256 must be lowercase sha256 hex" });
+        if (typeof e.preconditionDigest !== "string" || !SHA256_RE.test(e.preconditionDigest))
+          issues.push({ path: `${path}.preconditionDigest`, message: "preconditionDigest must be lowercase sha256 hex" });
         break;
       }
       case "owner_policy_set": {
@@ -545,6 +582,9 @@ export function foldMnemosyneEvents(stream: readonly unknown[]): MnemosyneFoldSt
         };
         break;
       }
+      case "policy_revision_recorded":
+        // Metadata-only durable replay receipt; never changes projection.
+        break;
       case "owner_policy_set":
         policies.set(event.policyId, {
           policyId: event.policyId,
