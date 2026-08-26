@@ -47,6 +47,12 @@ import {
   planPolicyActivatedSupersede,
   type PolicyConsolidationCard,
 } from "./policy-card-consolidation.js";
+import {
+  policyRevisionPreconditionDigest,
+  policyRevisionTargetDigest,
+  validatePolicyRevisionDecision,
+  type PolicyRevisionDecision,
+} from "./policy-revision-idempotence.js";
 
 export type HumanActor = "owner" | "companion" | "both";
 
@@ -68,6 +74,8 @@ export interface GovernanceStore {
   listItems(): GovernanceItemView[];
   ftsSearch(query: string, limit: number): Array<{ itemId: string; rank: number }>;
   listSources(subjectKind: string, subjectId: string): Array<{ kind: string; pointer: string }>;
+  /** Optional on structural fakes; required for durable decision-backed repair replay. */
+  readGovernance?(): MnemosyneEnvelope[];
   /** D0: current durable owner policies (fold-derived from events). */
   currentPolicies(): Map<string, OwnerPolicyCurrent>;
 }
@@ -225,6 +233,191 @@ export interface MnemosyneGovernanceOptions {
 
 const MAX_BODY_CHARS = 2000;
 const MAX_TITLE_CHARS = 120;
+const MAX_POLICY_REPAIR_TAGS = 32;
+const MAX_POLICY_REPAIR_TAG_CHARS = 80;
+
+type PolicyRepairBasis = "explicit" | "observed";
+type PolicyRepairScope = "global" | "relationship" | "project" | "au";
+type PolicyRepairSensitivity = "normal" | "sensitive" | "intimate";
+
+/**
+ * Complete retrieval-relevant replacement metadata for one policy-card repair.
+ * Omitting a field preserves the current projection. AU identity cannot be
+ * invented here: an existing AU may be preserved, or a repair may move to a
+ * durable non-AU scope. Formal AU reclassification belongs to the curation path.
+ */
+export interface PolicyActivatedRepairAttributes {
+  readonly tags?: readonly string[];
+  readonly scope?: "global" | "relationship" | "project";
+  readonly sensitivity?: "normal" | "sensitive" | "intimate";
+  readonly importance?: 1 | 2 | 3;
+}
+
+interface PolicyRepairState {
+  basis: PolicyRepairBasis;
+  scope: PolicyRepairScope;
+  auId: string | null;
+  sensitivity: PolicyRepairSensitivity;
+  importance: 1 | 2 | 3;
+  tags: string[];
+}
+
+interface ResolvedPolicyRepairAttributes {
+  scope: PolicyRepairScope;
+  auId: string | null;
+  sensitivity: PolicyRepairSensitivity;
+  importance: 1 | 2 | 3;
+  tags: string[];
+}
+
+function policyRepairState(
+  item: GovernanceItemView,
+): { ok: true; value: PolicyRepairState } | { ok: false; issues: GovernanceIssue[] } {
+  const issues: GovernanceIssue[] = [];
+  const basis =
+    item.source_basis === "explicit" || item.source_basis === "observed" ? item.source_basis : null;
+  if (basis === null) {
+    issues.push({
+      path: "sourceBasis",
+      message: "policy-card repair requires an explicit|observed projected evidence basis",
+    });
+  }
+  const provenanceBasis = deriveProvenanceAxes(parseProvenance(item)).evidenceBasis;
+  if (basis !== null && provenanceBasis !== null && provenanceBasis !== basis) {
+    issues.push({
+      path: "provenance.source_basis",
+      message: "projected evidence basis conflicts with provenance; repair refused",
+    });
+  }
+  if (item.confirmed_by !== null) {
+    issues.push({
+      path: "confirmed_by",
+      message: "policy-activated repair refuses cards carrying individual confirmation",
+    });
+  }
+  const scope =
+    item.scope === "global" ||
+    item.scope === "relationship" ||
+    item.scope === "project" ||
+    item.scope === "au"
+      ? item.scope
+      : null;
+  if (scope === null) {
+    issues.push({ path: "scope", message: "policy-card repair refuses non-durable scope" });
+  }
+  if (scope === "au" && (item.au_id === null || item.au_id.trim().length === 0)) {
+    issues.push({ path: "auId", message: "existing AU scope is missing an AU id" });
+  }
+  const sensitivity =
+    item.sensitivity === "normal" || item.sensitivity === "sensitive" || item.sensitivity === "intimate"
+      ? item.sensitivity
+      : null;
+  if (sensitivity === null) {
+    issues.push({ path: "sensitivity", message: "policy-card repair found invalid sensitivity" });
+  }
+  const importance = item.importance === 1 || item.importance === 2 || item.importance === 3
+    ? item.importance
+    : null;
+  if (importance === null) {
+    issues.push({ path: "importance", message: "policy-card repair found invalid importance" });
+  }
+  if (issues.length > 0 || basis === null || scope === null || sensitivity === null || importance === null) {
+    return { ok: false, issues };
+  }
+  return {
+    ok: true,
+    value: {
+      basis,
+      scope,
+      auId: item.au_id,
+      sensitivity,
+      importance,
+      tags: item.tags_text.split(" ").filter((tag) => tag.length > 0),
+    },
+  };
+}
+
+function resolvePolicyRepairAttributes(
+  state: PolicyRepairState,
+  attrs: PolicyActivatedRepairAttributes | undefined,
+): { ok: true; value: ResolvedPolicyRepairAttributes } | { ok: false; issues: GovernanceIssue[] } {
+  const issues: GovernanceIssue[] = [];
+  let tags = [...state.tags];
+  if (attrs?.tags !== undefined) {
+    if (!Array.isArray(attrs.tags)) {
+      issues.push({ path: "attrs.tags", message: "replacement tags must be an array" });
+    } else if (attrs.tags.length > MAX_POLICY_REPAIR_TAGS) {
+      issues.push({
+        path: "attrs.tags",
+        message: `replacement tags must contain at most ${MAX_POLICY_REPAIR_TAGS} entries`,
+      });
+    } else {
+      const next: string[] = [];
+      const seen = new Set<string>();
+      attrs.tags.forEach((rawTag, index) => {
+        if (typeof rawTag !== "string") {
+          issues.push({ path: `attrs.tags[${index}]`, message: "tag must be a string" });
+          return;
+        }
+        if (
+          rawTag.length === 0 ||
+          rawTag.length > MAX_POLICY_REPAIR_TAG_CHARS ||
+          rawTag !== rawTag.trim() ||
+          /\s/u.test(rawTag)
+        ) {
+          issues.push({
+            path: `attrs.tags[${index}]`,
+            message: `tag must be a trimmed non-whitespace token of 1..${MAX_POLICY_REPAIR_TAG_CHARS} chars`,
+          });
+          return;
+        }
+        if (seen.has(rawTag)) {
+          issues.push({ path: `attrs.tags[${index}]`, message: "replacement tags must be unique" });
+          return;
+        }
+        seen.add(rawTag);
+        next.push(rawTag);
+      });
+      tags = next;
+    }
+  }
+
+  const requestedScope = attrs?.scope;
+  if (
+    requestedScope !== undefined &&
+    requestedScope !== "global" &&
+    requestedScope !== "relationship" &&
+    requestedScope !== "project"
+  ) {
+    issues.push({
+      path: "attrs.scope",
+      message: "revision scope must be global|relationship|project; use AU reclassification for AU scope",
+    });
+  }
+  const scope: PolicyRepairScope = requestedScope ?? state.scope;
+  const auId = scope === "au" ? state.auId : null;
+  if (scope === "au" && (auId === null || auId.trim().length === 0)) {
+    issues.push({ path: "attrs.scope", message: "preserved AU scope is missing an AU id" });
+  }
+
+  const sensitivity = attrs?.sensitivity ?? state.sensitivity;
+  if (sensitivity !== "normal" && sensitivity !== "sensitive" && sensitivity !== "intimate") {
+    issues.push({ path: "attrs.sensitivity", message: "invalid replacement sensitivity" });
+  }
+  const importance = attrs?.importance ?? state.importance;
+  if (importance !== 1 && importance !== 2 && importance !== 3) {
+    issues.push({ path: "attrs.importance", message: "replacement importance must be 1..3" });
+  }
+
+  if (issues.length > 0) {
+    return { ok: false, issues };
+  }
+  return { ok: true, value: { scope, auId, sensitivity, importance, tags } };
+}
+
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 function proposalOriginFor(input: Pick<ProposeInput, "proposedBy" | "provenance">): ProposalOrigin {
   return (
@@ -828,6 +1021,235 @@ export class MnemosyneGovernanceService {
       };
     }
     return this.reviseKernel("revise", item, newBody, by === "both" ? "owner" : by, newTitle, by);
+  }
+
+  /**
+   * Evidence-backed correction for an active policy-activated card. The exact
+   * canonical replacement evidence must preserve the card's existing
+   * explicit|observed basis. Approval stays policy_activated and no confirmed
+   * event is written.
+   *
+   * When `decision` is supplied, its immutable identity and full semantic
+   * target digest are recorded in the SAME joint transaction as the revision.
+   * Exact replay is resolved before timestamp/UUID generation; conflicting
+   * reuse of an id or a stale first-application precondition fails closed.
+   */
+  async revisePolicyActivated(
+    memoryId: string,
+    newBody: string,
+    evidence: MemoryCreationEvidence,
+    by: "owner" | "companion",
+    newTitle?: string,
+    attrs?: PolicyActivatedRepairAttributes,
+    decision?: PolicyRevisionDecision,
+  ): Promise<GovernanceOutcome<GovernanceWriteReceipt>> {
+    const item = this.store.getItem(memoryId);
+    if (item === undefined || item.lifecycle_state !== "active") {
+      return { status: "refused", issues: [{ path: "memoryId", message: "no active card" }] };
+    }
+    if (item.approval_state !== "policy_activated") {
+      return { status: "refused", issues: [{ path: "memoryId", message: "card is not policy-activated" }] };
+    }
+    const state = policyRepairState(item);
+    if (!state.ok) {
+      return { status: "refused", issues: state.issues };
+    }
+    const resolvedAttrs = resolvePolicyRepairAttributes(state.value, attrs);
+    if (!resolvedAttrs.ok) {
+      return { status: "refused", issues: resolvedAttrs.issues };
+    }
+    const body = newBody.trim();
+    const issues: GovernanceIssue[] = [];
+    if (body.length === 0 || body.length > MAX_BODY_CHARS) {
+      issues.push({ path: "body", message: `replacement text must be 1..${MAX_BODY_CHARS} chars` });
+    } else {
+      const admission = assessUntrustedBody(body);
+      if (!admission.ok) issues.push({ path: "body", message: admission.reason });
+    }
+    const title = newTitle === undefined ? item.title : newTitle.trim();
+    if (newTitle !== undefined) {
+      if (title.length === 0 || title.length > MAX_TITLE_CHARS) {
+        issues.push({ path: "title", message: `replacement title must be 1..${MAX_TITLE_CHARS} chars` });
+      } else {
+        const titleAdmission = assessUntrustedBody(title);
+        if (!titleAdmission.ok) issues.push({ path: "title", message: titleAdmission.reason });
+      }
+    }
+    const evidenceBasis = canonicalBasisForEvidence(evidence);
+    if (evidenceBasis !== state.value.basis) {
+      issues.push({
+        path: "evidence",
+        message: `repair evidence basis ${evidenceBasis} does not match preserved basis ${state.value.basis}`,
+      });
+    }
+    if (issues.length > 0) {
+      return { status: "refused", issues };
+    }
+
+    const nextAttrs = resolvedAttrs.value;
+    let decisionTargetDigest: string | null = null;
+    if (decision !== undefined) {
+      const validation = validatePolicyRevisionDecision(decision);
+      if (!validation.ok) {
+        return { status: "refused", issues: [{ path: validation.path, message: validation.message }] };
+      }
+      if (this.store.readGovernance === undefined) {
+        return {
+          status: "refused",
+          issues: [{ path: "decision", message: "store does not expose durable governance history; decision-backed revision refused" }],
+        };
+      }
+      decisionTargetDigest = policyRevisionTargetDigest(decision, {
+        memoryId: item.id,
+        body,
+        title,
+        tags: nextAttrs.tags,
+        scope: nextAttrs.scope,
+        auId: nextAttrs.auId,
+        sensitivity: nextAttrs.sensitivity,
+        importance: nextAttrs.importance,
+        evidence,
+        sourceBasis: state.value.basis,
+      });
+      const priorReceipts = this.store
+        .readGovernance()
+        .filter(
+          (envelope) =>
+            envelope.event.type === "policy_revision_recorded" &&
+            envelope.event.decisionId === decision.decisionId,
+        );
+      if (priorReceipts.length > 1) {
+        return {
+          status: "refused",
+          issues: [{ path: "decision.decisionId", message: "duplicate durable receipts already exist for this decision id; repair refused" }],
+        };
+      }
+      const prior = priorReceipts[0];
+      if (prior !== undefined && prior.event.type === "policy_revision_recorded") {
+        if (
+          prior.event.memoryId === item.id &&
+          prior.event.targetDigest === decisionTargetDigest &&
+          prior.event.sourceSha256 === decision.sourceSha256 &&
+          prior.event.preconditionDigest === decision.preconditionDigest
+        ) {
+          return {
+            status: "already",
+            detail: `policy revision decision ${decision.decisionId} already applied — nothing was written`,
+          };
+        }
+        return {
+          status: "refused",
+          issues: [{ path: "decision.decisionId", message: "decision id already exists with a different memory or target payload" }],
+        };
+      }
+      const currentPreconditionDigest = policyRevisionPreconditionDigest({
+        id: item.id,
+        body: item.body,
+        title: item.title,
+        tags: state.value.tags,
+        scope: state.value.scope,
+        auId: state.value.auId,
+        sensitivity: state.value.sensitivity,
+        importance: state.value.importance,
+        approvalState: item.approval_state,
+        lifecycleState: item.lifecycle_state,
+        sourceBasis: state.value.basis,
+        provenance: parseProvenance(item),
+      });
+      if (currentPreconditionDigest !== decision.preconditionDigest) {
+        return {
+          status: "refused",
+          issues: [{ path: "decision.preconditionDigest", message: "policy revision precondition is stale; zero writes performed" }],
+        };
+      }
+    }
+
+    const revised = {
+      schemaVersion: 1,
+      eventId: randomUUID(),
+      occurredAt: this.now().toISOString(),
+      event: {
+        type: "memory_revised",
+        memoryId: item.id,
+        revisionId: randomUUID(),
+        revisionKind: "correction",
+        content: body,
+        evidence,
+        scope: { kind: "shared" },
+      },
+    } as unknown as MemoryEventEnvelope;
+    const titleChanged = newTitle !== undefined && title !== item.title;
+    const tagsChanged = !sameStringArray(nextAttrs.tags, state.value.tags);
+    const scopeChanged = nextAttrs.scope !== state.value.scope || nextAttrs.auId !== state.value.auId;
+    const sensitivityChanged = nextAttrs.sensitivity !== state.value.sensitivity;
+    const importanceChanged = nextAttrs.importance !== state.value.importance;
+    const governance: MnemosyneEnvelope[] = [];
+    if (
+      titleChanged ||
+      tagsChanged ||
+      scopeChanged ||
+      sensitivityChanged ||
+      importanceChanged ||
+      attrs !== undefined
+    ) {
+      governance.push({
+        eventId: randomUUID(),
+        occurredAt: this.now().toISOString(),
+        actor: by,
+        event: {
+          type: "attributes_set",
+          memoryId: item.id,
+          title,
+          tags: [...nextAttrs.tags],
+          scope: nextAttrs.scope,
+          ...(nextAttrs.scope === "au" && nextAttrs.auId !== null ? { auId: nextAttrs.auId } : {}),
+          sensitivity: nextAttrs.sensitivity,
+          importance: nextAttrs.importance,
+          sourceBasis: state.value.basis,
+        },
+      });
+    }
+    governance.push({
+      eventId: randomUUID(),
+      occurredAt: this.now().toISOString(),
+      actor: by,
+      event: { type: "provenance_set", memoryId: item.id, roles: { edited_by: by } },
+    });
+    if (decision !== undefined && decisionTargetDigest !== null) {
+      governance.push({
+        eventId: randomUUID(),
+        occurredAt: this.now().toISOString(),
+        actor: by,
+        event: {
+          type: "policy_revision_recorded",
+          memoryId: item.id,
+          decisionId: decision.decisionId,
+          targetDigest: decisionTargetDigest,
+          sourceSha256: decision.sourceSha256,
+          preconditionDigest: decision.preconditionDigest,
+        },
+      });
+    }
+    return this.commit("revise_policy_activated", item.id, [revised], governance, {
+      by,
+      source_basis: state.value.basis,
+      evidence_kind: evidence.kind,
+      title_changed: titleChanged,
+      tags_changed: tagsChanged,
+      scope_changed: scopeChanged,
+      sensitivity_changed: sensitivityChanged,
+      importance_changed: importanceChanged,
+      attribute_patch_supplied: attrs !== undefined,
+      ...(decision !== undefined && decisionTargetDigest !== null
+        ? {
+            decision_id: decision.decisionId,
+            target_digest: decisionTargetDigest,
+            source_sha256: decision.sourceSha256,
+            precondition_digest: decision.preconditionDigest,
+          }
+        : {}),
+      token_estimate: estimateTokens(body),
+    });
   }
 
   /**
