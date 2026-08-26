@@ -169,8 +169,10 @@ test("exact durable decision receipts skip post-write state and perform zero sem
   state.clear();
 
   const result = await applyCurationDecisionSet(input, reader, writer);
+  if (result.status === "refused") {
+    assert.fail(result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
+  }
   assert.equal(result.status, "already");
-  if (result.status === "refused") return;
   assert.equal(result.applied, 0);
   assert.equal(result.already, 1);
   assert.deepEqual(writer.applied, []);
@@ -194,8 +196,10 @@ test("mixed replay applies only decisions without a durable per-decision receipt
   writer.decisions.set(prior.decisionId, prior);
 
   const result = await applyCurationDecisionSet(input, reader, writer);
+  if (result.status === "refused") {
+    assert.fail(result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("; "));
+  }
   assert.equal(result.status, "ok");
-  if (result.status === "refused") return;
   assert.equal(result.applied, 1);
   assert.equal(result.already, 1);
   assert.equal(writer.applied.length, 1);
