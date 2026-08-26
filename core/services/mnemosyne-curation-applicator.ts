@@ -16,6 +16,23 @@ export interface CurationStateReader {
   getItem(id: string): GovernanceItemView | undefined;
 }
 
+/** Metadata-only durable identity for one applied curation decision. */
+export interface CurationDecisionReceipt {
+  readonly memoryId: string;
+  readonly decisionId: string;
+  readonly decisionSetId: string;
+  readonly action: Exclude<CurationAction, "NEEDS_OWNER">;
+  readonly targetDigest: string;
+  readonly preconditionDigest: string;
+}
+
+/** Metadata-only completion identity for an entire reviewed decision set. */
+export interface CurationBatchReceipt {
+  readonly decisionSetId: string;
+  readonly decisionSetSha256: string;
+  readonly decisionIds: readonly string[];
+}
+
 export interface CurationApplyIssue {
   readonly path: string;
   readonly message: string;
@@ -29,14 +46,55 @@ export interface CurationWritePlan {
   readonly actor: "owner" | "companion";
 }
 
+export type CurationWriterOutcome =
+  | { readonly status: "ok"; readonly receipt: CurationDecisionReceipt }
+  | { readonly status: "already"; readonly receipt: CurationDecisionReceipt }
+  | { readonly status: "refused"; readonly message: string };
+
+/** Read-only durable receipt surface. Supplying none preserves pure planning. */
+export interface CurationReceiptReader {
+  readDecisionReceipt(decisionId: string): CurationDecisionReceipt | undefined;
+  readBatchReceipt(decisionSetId: string): CurationBatchReceipt | undefined;
+}
+
+/**
+ * Applicator mutation port. Concrete implementations must delegate semantic
+ * changes and receipt persistence to the one governance writer; this module
+ * never receives a store mutation primitive.
+ */
+export interface CurationWriter extends CurationReceiptReader {
+  applyDecision(plan: CurationWritePlan): Promise<CurationWriterOutcome>;
+  completeBatch(
+    receipt: CurationBatchReceipt,
+  ): Promise<{ readonly status: "ok" | "already" } | { readonly status: "refused"; readonly message: string }>;
+}
+
+export interface PreparedCurationDecision {
+  readonly plan: CurationWritePlan;
+  readonly priorReceipt: CurationDecisionReceipt | undefined;
+}
+
 export type CurationApplicationPreflight =
   | {
       readonly ok: true;
       readonly decisionSetId: string;
       readonly decisionSetSha256: string;
+      /** All plans, retained for the existing read-only planning contract. */
       readonly plans: readonly CurationWritePlan[];
+      /** Replay-aware preparation: an exact prior receipt means zero semantic writes. */
+      readonly prepared: readonly PreparedCurationDecision[];
+      readonly batchAlready: boolean;
     }
   | { readonly ok: false; readonly issues: readonly CurationApplyIssue[] };
+
+export type CurationApplyOutcome =
+  | {
+      readonly status: "ok" | "already";
+      readonly decisionSetId: string;
+      readonly applied: number;
+      readonly already: number;
+    }
+  | { readonly status: "refused"; readonly issues: readonly CurationApplyIssue[] };
 
 function evidenceBasis(evidence: MemoryCreationEvidence): "explicit" | "observed" | null {
   if (evidence.kind === "user_statement") return "explicit";
@@ -241,15 +299,44 @@ export function curationDecisionTargetDigest(decision: EffectiveCurationDecision
   });
 }
 
+function sameStringArray(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function receiptMatches(receipt: CurationDecisionReceipt, plan: CurationWritePlan): boolean {
+  return (
+    receipt.memoryId === plan.decision.row.card_id &&
+    receipt.decisionId === plan.decision.decisionId &&
+    receipt.decisionSetId === plan.decision.decisionSetId &&
+    receipt.action === plan.action &&
+    receipt.targetDigest === plan.targetDigest &&
+    receipt.preconditionDigest === plan.preconditionDigest
+  );
+}
+
+function batchReceiptMatches(
+  receipt: CurationBatchReceipt,
+  decisionSetId: string,
+  decisionSetSha256: string,
+  decisionIds: readonly string[],
+): boolean {
+  return (
+    receipt.decisionSetId === decisionSetId &&
+    receipt.decisionSetSha256 === decisionSetSha256 &&
+    sameStringArray([...receipt.decisionIds].sort(), [...decisionIds].sort())
+  );
+}
+
 /**
- * Read-only whole-set application preflight. This module owns no store and has
- * no mutation port: every reviewed decision and all referenced participants are
- * validated before a later governance-writer slice is allowed to perform the
- * first append.
+ * Whole-set application preflight. With no receipt reader this remains the
+ * existing pure state planner. When durable receipts are supplied, exact
+ * replay is resolved from immutable identities before consulting post-write
+ * projection state, while conflicting reuse fails closed.
  */
 export function preflightCurationApplication(
   bundle: CurationDecisionSetBundle,
   reader: CurationStateReader,
+  receipts?: CurationReceiptReader,
 ): CurationApplicationPreflight {
   const contract = preflightCurationDecisionSet(bundle);
   if (!contract.ok) {
@@ -258,6 +345,27 @@ export function preflightCurationApplication(
 
   const issues: CurationApplyIssue[] = [];
   const plans: CurationWritePlan[] = [];
+  const prepared: PreparedCurationDecision[] = [];
+  const decisionIds = contract.value.decisions.map((decision) => decision.decisionId).sort();
+  const priorBatch = receipts?.readBatchReceipt(contract.value.decisionSetId);
+  let batchAlready = false;
+  if (priorBatch !== undefined) {
+    if (
+      batchReceiptMatches(
+        priorBatch,
+        contract.value.decisionSetId,
+        contract.value.decisionSetSha256,
+        decisionIds,
+      )
+    ) {
+      batchAlready = true;
+    } else {
+      issues.push({
+        path: "batchReceipt",
+        message: "decision-set id already has a conflicting durable batch receipt",
+      });
+    }
+  }
 
   for (const decision of contract.value.decisions) {
     if (decision.row.action === "NEEDS_OWNER") {
@@ -269,6 +377,29 @@ export function preflightCurationApplication(
     }
     const action = decision.row.action;
     const actor = actorFor(decision, issues);
+    if (actor === null) continue;
+    const targetDigest = curationDecisionTargetDigest(decision);
+    const priorReceipt = receipts?.readDecisionReceipt(decision.decisionId);
+
+    if (priorReceipt !== undefined) {
+      const replayPlan: CurationWritePlan = {
+        decision,
+        action,
+        preconditionDigest: priorReceipt.preconditionDigest,
+        targetDigest,
+        actor,
+      };
+      if (!receiptMatches(priorReceipt, replayPlan)) {
+        issues.push({
+          path: `decisions.${decision.row.card_id}.receipt`,
+          message: "decision id already has a conflicting durable receipt",
+        });
+      }
+      plans.push(replayPlan);
+      prepared.push({ plan: replayPlan, priorReceipt });
+      continue;
+    }
+
     const item = reader.getItem(decision.row.card_id);
     if (item === undefined) {
       issues.push({ path: `decisions.${decision.row.card_id}`, message: "reviewed card is missing from the target store" });
@@ -308,15 +439,16 @@ export function preflightCurationApplication(
       });
       continue;
     }
-    if (actor === null) continue;
 
-    plans.push({
+    const plan: CurationWritePlan = {
       decision,
       action,
       preconditionDigest,
-      targetDigest: curationDecisionTargetDigest(decision),
+      targetDigest,
       actor,
-    });
+    };
+    plans.push(plan);
+    prepared.push({ plan, priorReceipt: undefined });
   }
 
   if (issues.length > 0) return { ok: false, issues };
@@ -325,5 +457,84 @@ export function preflightCurationApplication(
     decisionSetId: contract.value.decisionSetId,
     decisionSetSha256: contract.value.decisionSetSha256,
     plans,
+    prepared,
+    batchAlready,
+  };
+}
+
+/**
+ * Replay-aware orchestration over the abstract governance-writer port. No
+ * semantic write is attempted until whole-set preflight has succeeded. Exact
+ * prior decisions are zero-write skips, and the batch receipt is requested
+ * only after every decision has one matching durable receipt.
+ */
+export async function applyCurationDecisionSet(
+  bundle: CurationDecisionSetBundle,
+  reader: CurationStateReader,
+  writer: CurationWriter,
+): Promise<CurationApplyOutcome> {
+  const preflight = preflightCurationApplication(bundle, reader, writer);
+  if (!preflight.ok) return { status: "refused", issues: preflight.issues };
+
+  if (preflight.batchAlready) {
+    return {
+      status: "already",
+      decisionSetId: preflight.decisionSetId,
+      applied: 0,
+      already: preflight.prepared.length,
+    };
+  }
+
+  let applied = 0;
+  let already = 0;
+  for (const preparedDecision of preflight.prepared) {
+    if (preparedDecision.priorReceipt !== undefined) {
+      already += 1;
+      continue;
+    }
+    const outcome = await writer.applyDecision(preparedDecision.plan);
+    if (outcome.status === "refused") {
+      return {
+        status: "refused",
+        issues: [
+          {
+            path: `decisions.${preparedDecision.plan.decision.row.card_id}`,
+            message: outcome.message,
+          },
+        ],
+      };
+    }
+    if (!receiptMatches(outcome.receipt, preparedDecision.plan)) {
+      return {
+        status: "refused",
+        issues: [
+          {
+            path: `decisions.${preparedDecision.plan.decision.row.card_id}.receipt`,
+            message: "writer returned a receipt that does not bind the requested decision",
+          },
+        ],
+      };
+    }
+    if (outcome.status === "already") already += 1;
+    else applied += 1;
+  }
+
+  const completed = await writer.completeBatch({
+    decisionSetId: preflight.decisionSetId,
+    decisionSetSha256: preflight.decisionSetSha256,
+    decisionIds: preflight.prepared.map((entry) => entry.plan.decision.decisionId).sort(),
+  });
+  if (completed.status === "refused") {
+    return {
+      status: "refused",
+      issues: [{ path: "batchReceipt", message: completed.message }],
+    };
+  }
+
+  return {
+    status: applied === 0 ? "already" : "ok",
+    decisionSetId: preflight.decisionSetId,
+    applied,
+    already,
   };
 }
