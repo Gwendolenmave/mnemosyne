@@ -30,6 +30,11 @@ public test suite, adversarial scanner tests, working-tree privacy scan, and
 isolated-history scan. Do not quote a historical test count as a parity claim;
 the exact current `main` workflow run is the verification authority.
 
+A GitHub Actions run that fails before receiving a runner or before executing
+any repository step is infrastructure evidence, not a source-test result. It
+must not be reported as either a green verification or a code failure; obtain a
+fresh exact-head run before making a final verification claim.
+
 This repository does **not** claim current-private parity. Specification, source
 bytes, tests, merge state, package publication, and live deployment are distinct
 states. The non-embedding governance/retention work described above is merged
