@@ -53,6 +53,7 @@ Nothing needs to pretend Monday was never said. The important distinction is tha
 That one example captures most of the design:
 
 - **Evidence is not automatically memory.** Something being present in a transcript does not make it durable truth.
+- **Retention comes before long-term admission.** Session-only and episodic material do not become ordinary long-term candidates just because they also resemble a preference, relationship, or project fact.
 - **Eligibility comes before ranking.** Scope, lifecycle, authority, sensitivity, expiry, relationship/project/AU boundaries, and retrieval permission decide whether a memory may appear at all.
 - **Old facts can be superseded instead of erased.** History remains inspectable while current truth changes.
 - **Indexes are rebuildable.** Durable event history is authority; current views and search projections are derived state.
@@ -89,13 +90,20 @@ Normal package use requires Node and npm. Full repository verification also uses
 
 Mnemosyne deliberately does **not** own your provider, transcript transport, clock, backup destination, audit sink, or deployment policy. The host supplies those boundaries.
 
-The package exposes the storage, governance, recall, decision, and automation building blocks from one ESM entry point:
+The package exposes stable storage, governance, curation, retention, recall, decision, and automation concepts from one ESM entry point. Prefer package-root namespaces such as `Governance`, `Curation`, `Retention`, `Anamnesis`, and `SqliteMnemosyne` over depending on individual internal service files.
 
 ```ts
 import {
   Anamnesis,
+  Retention,
   SqliteMnemosyne,
 } from "@delos/mnemosyne";
+
+const retention = Retention.dispatchPortableRetention({
+  schemaVersion: 1,
+  evidenceCodes: ["stable_preference"],
+  auId: null,
+});
 
 const handle = SqliteMnemosyne.openMnemosyne("./local-state/mnemosyne.db");
 
@@ -107,7 +115,7 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-That snippet only shows the shape of the read side. A complete governed write-and-read example lives in [`examples/local-flow.ts`](examples/local-flow.ts). Read [Integration](docs/INTEGRATION.md) before connecting real evidence or a live transport.
+That snippet only shows the shape of retention classification and the read side. A complete governed write-and-read example lives in [`examples/local-flow.ts`](examples/local-flow.ts). Read [Integration](docs/INTEGRATION.md) before connecting real evidence or a live transport.
 
 ## What the names mean
 
@@ -127,8 +135,10 @@ If you are changing those boundaries, use [Architecture](docs/ARCHITECTURE.md) a
 
 Mnemosyne **does** provide:
 
-- governed memory writes with provenance and policy/confirmation boundaries;
+- governed memory writes with canonical evidence, provenance, and policy/confirmation boundaries;
 - lifecycle operations such as revision, expiry, revocation, supersession, retrieval disablement, and authorized deletion flow;
+- replay-safe policy repair and formal curation through one governance writer;
+- portable retention classification so short-lived or episodic evidence can stop before ordinary long-term admission;
 - recall that filters for eligibility before similarity/ranking;
 - append-only event authority with rebuildable current views and indexes;
 - metadata-only audit paths so diagnostics do not become a second hidden memory store.
@@ -146,6 +156,10 @@ Mnemosyne **does not** provide:
 The public repository contains source code, public documentation, schemas, and synthetic fixtures. Real runtime material belongs outside the repository, including memory databases, transcripts, queues, logs, backups, prompts, provider responses, credentials, account identifiers, and machine-specific paths.
 
 Network behavior also belongs to the host boundary: Mnemosyne itself is a library, not a cloud service. See [Privacy model](docs/PRIVACY-MODEL.md) for the repository/runtime/network split.
+
+## Public status boundary
+
+The current repository documents and tests the behavior that is actually merged here. It does **not** use “compatibility” as shorthand for current-private parity. Specification, source bytes, tests, merge state, package publication, and live deployment are separate states. Embedding/vector/hybrid retrieval is intentionally outside the current non-embedding governance/retention parity work; see [Status](docs/STATUS.md) for the current public matrix.
 
 ## If you are changing the code
 
