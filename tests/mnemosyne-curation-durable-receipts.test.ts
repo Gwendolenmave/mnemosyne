@@ -85,6 +85,11 @@ test("SQLite preserves decision and set receipts across rebuild and reopen", asy
   try {
     const appended = first.store.appendJoint([], [decisionReceipt(), batchReceipt()]);
     assert.deepEqual(appended, { status: "appended", kernel: 0, governance: 2 });
+    const batchRow = first.log.db
+      .prepare("SELECT subject_id FROM memory_events WHERE type = 'curation_batch_recorded'")
+      .get() as { subject_id: string } | undefined;
+    assert.equal(batchRow?.subject_id, `decision-set:${SET_ID}`);
+
     await first.store.rebuildProjections();
     assert.equal(first.store.projectionFreshness().fresh, true);
     assert.deepEqual(
