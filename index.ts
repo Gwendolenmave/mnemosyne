@@ -11,6 +11,7 @@ export * as EpisodePass1Domain from "./core/domain/episode-pass1.js";
 export * as EpisodePass2Domain from "./core/domain/episode-pass2.js";
 export * as Anamnesis from "./core/services/anamnesis.js";
 export * as Governance from "./core/services/mnemosyne-governance.js";
+export * as Curation from "./core/services/mnemosyne-curation.js";
 export * as Retention from "./core/services/retention-authority.js";
 export * as CompanionSink from "./core/services/companion-proposal-sink.js";
 export * as ContextAssembly from "./core/services/context-assembler.js";
