@@ -127,12 +127,12 @@ function plan(
 function assertTerminal(
   service: MnemosyneGovernanceService,
   memoryId: string,
-  lifecycle: "inactive" | "superseded",
+  lifecycle: "revoked" | "superseded",
 ): void {
   const item = service.getCard(memoryId);
   assert.ok(item);
   assert.equal(item.lifecycle_state, lifecycle);
-  if (lifecycle === "inactive") assert.equal(item.retrieval, "disabled");
+  if (lifecycle === "revoked") assert.equal(item.retrieval, "disabled");
 }
 
 test("formal curation semantic effects and receipts survive rebuild/reopen and exact replay is zero-write", async () => {
@@ -232,8 +232,8 @@ test("formal curation semantic effects and receipts survive rebuild/reopen and e
     assertTerminal(service, mergeBId, "superseded");
     assert.equal(service.getCard(mergeAId)?.supersedes, mergeSurvivorId);
     assert.equal(service.getCard(mergeBId)?.supersedes, mergeSurvivorId);
-    assertTerminal(service, revokeId, "inactive");
-    assertTerminal(service, episodicId, "inactive");
+    assertTerminal(service, revokeId, "revoked");
+    assertTerminal(service, episodicId, "revoked");
     for (const candidate of plans) {
       const receipts = service.curationDecisionReceipts(candidate.decision.decisionId);
       assert.equal(receipts.length, 1);
