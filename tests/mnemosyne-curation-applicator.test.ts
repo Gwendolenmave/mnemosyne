@@ -193,8 +193,12 @@ test("non-REVISE actions bind the exact projected state before any later writer 
 
   assert.equal(result.ok, true);
   if (!result.ok) return;
-  assert.deepEqual(result.plans.map((plan) => plan.action), ["KEEP", "REVOKE", "EPISODIC_ONLY", "RECLASSIFY_AU"]);
-  assert.equal(result.plans[0]!.actor, "owner");
+  const actionByCard = new Map(result.plans.map((plan) => [plan.decision.row.card_id, plan.action]));
+  assert.equal(actionByCard.get("card-keep"), "KEEP");
+  assert.equal(actionByCard.get("card-revoke"), "REVOKE");
+  assert.equal(actionByCard.get("card-episodic"), "EPISODIC_ONLY");
+  assert.equal(actionByCard.get("card-au"), "RECLASSIFY_AU");
+  assert.equal(result.plans.find((plan) => plan.decision.row.card_id === "card-keep")?.actor, "owner");
   for (const plan of result.plans) {
     assert.equal(plan.preconditionDigest, curationItemPreconditionDigest(state.get(plan.decision.row.card_id)!));
   }
