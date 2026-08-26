@@ -63,6 +63,20 @@ export function evidencePointer(evidence: MemoryEvidence): { kind: string; point
   }
 }
 
+/** Stable SQLite subject id for every governance event, including set-level receipts. */
+function governanceSubjectId(event: MnemosyneEnvelope["event"]): string {
+  if (event.type === "prior_proposed" || event.type === "prior_approved") {
+    return event.key;
+  }
+  if (event.type === "owner_policy_set") {
+    return event.policyId;
+  }
+  if (event.type === "curation_batch_recorded") {
+    return `decision-set:${event.decisionSetId}`;
+  }
+  return event.memoryId;
+}
+
 export interface MemoryItemRow {
   id: string;
   title: string;
@@ -202,15 +216,10 @@ export class MnemosyneStore {
       for (const envelope of result.value.slice(result.value.length - envelopes.length)) {
         const event = envelope.event;
         const isPrior = event.type === "prior_proposed" || event.type === "prior_approved";
-        const subjectId = isPrior
-          ? (event as { key: string }).key
-          : event.type === "owner_policy_set"
-            ? event.policyId
-            : (event as { memoryId: string }).memoryId;
         insert.run(
           envelope.eventId,
           isPrior ? "prior" : "governance",
-          subjectId,
+          governanceSubjectId(event),
           event.type,
           JSON.stringify(envelope),
           envelope.occurredAt,
@@ -280,11 +289,7 @@ export class MnemosyneStore {
         insert.run(
           envelope.eventId,
           isPrior ? "prior" : "governance",
-          isPrior
-            ? (event as { key: string }).key
-            : event.type === "owner_policy_set"
-              ? event.policyId
-              : (event as { memoryId: string }).memoryId,
+          governanceSubjectId(event),
           event.type,
           JSON.stringify(envelope),
           envelope.occurredAt,
