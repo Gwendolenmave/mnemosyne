@@ -4,60 +4,112 @@
 
 [简体中文](README.zh-CN.md)
 
-**Long-term memory for personal AI, with rules about what may be remembered and when it may return.**
+**Personal AI memory should be more than “find the old text that looks most similar.” Mnemosyne gives a memory provenance, lifetime, authority, scope, and history.**
 
-Mnemosyne is for the part that a vector store does not solve by itself.
+If vector search answers “what from the past resembles this query?”, Mnemosyne focuses on a different set of questions: **Does this evidence deserve to become durable memory? Is it still true now? Which context does it belong to? Is it allowed to surface here? If the fact changes later, what happens to the old one?**
 
-Finding similar text is useful. But long-term memory also has to answer harder questions: Is this fact still current? Was it ever authorized as durable memory? Does it belong to this project, relationship, or fictional world? Is it allowed to appear in this scene? If two memories conflict, which one is current truth and which one is history?
+Mnemosyne is a local-first, model-neutral governed memory library. It was originally built for [Delos](https://github.com/Gwendolenmave/delos), but it can be embedded in other personal AI runtimes while the host continues to own the provider, persona, transport, UI, and deployment model.
 
-Mnemosyne keeps those questions separate instead of hiding them inside one similarity score.
+## One end-to-end example is faster than a feature list
 
-## Start here
+Imagine a person named **Mira** has been using the same assistant for several months.
 
-| I want to… | Start with |
-| --- | --- |
-| understand the idea quickly | [The 60-second model](#the-60-second-model) |
-| try it on my machine | [Try it locally](#try-it-locally) |
-| embed it in another runtime | [Integration](docs/INTEGRATION.md) |
-| understand what is implemented today | [Status](docs/STATUS.md) |
-| understand the privacy boundary | [Privacy model](docs/PRIVACY-MODEL.md) |
-| modify Mnemosyne itself | **read [Architecture](docs/ARCHITECTURE.md) first** |
+### 1. A sentence begins as evidence, not memory
 
-Mnemosyne was built for [Delos](https://github.com/Gwendolenmave/delos), but the package is model-neutral and can be embedded in another personal AI runtime.
+In an ordinary conversation, Mira says:
 
-## The 60-second model
+> “For long train trips, default to a window seat for me.”
 
-Suppose a project meeting used to be on Monday and is now on Thursday.
+That sentence first becomes transcript evidence. It proves that the sentence was said, but it does not become durable truth merely because it appeared in a conversation.
 
-A simple vector store may keep both sentences and return whichever looks more similar to the current query. Mnemosyne instead treats the change as a lifecycle event:
+Retention can identify it as material worth considering for long-term admission. It still passes through a candidate / proposal step and then requires a **registered policy or explicit confirmation**. Only a governed write may create the durable lifecycle event that makes it part of the current memory projection.
+
+### 2. A temporary exception does not silently rewrite a durable preference
+
+A few weeks later, Mira says:
+
+> “For this trip with my friend, use an aisle seat just this once.”
+
+This is extremely similar to the original seat preference, but its lifetime is different. It may remain episodic / short-lived evidence without overwriting the durable default merely because an embedding considers the two sentences close.
+
+### 3. A fictional-world fact does not leak into an ordinary scene
+
+That evening she enters an AU called **Nocturne**:
+
+> “In this world, Mira never sits by the window.”
+
+This evidence belongs to another realm. Even though it contains the same entities and concepts — Mira, seats, windows — it is not an ordinary-scene fact. AU / realm separation is an eligibility boundary, not a small ranking weight that a large similarity score can overpower.
+
+### 4. A real long-term change updates current truth without erasing history
+
+Two months later, back in ordinary conversation, Mira says:
+
+> “I really changed my mind. From now on, default to an aisle seat.”
+
+The new evidence goes through governance again. A revision / supersession can make “default to aisle” the current fact while the old window preference leaves ordinary recall.
+
+The old fact is not rewritten into “it was never said.” It remains in append-only event history with its provenance, authority, and lifecycle transitions. The current view is only a projection folded from that history.
+
+### 5. Recall asks “may this appear?” before it asks “how similar is it?”
+
+The next week, in an ordinary scene, someone asks:
+
+> “Which seat should I choose for Mira’s next train?”
+
+Anamnesis removes ineligible material before ranking:
+
+- the old “default to window” preference has been superseded;
+- the one-trip aisle choice was a short-lived / episodic exception;
+- the Nocturne fact belongs to another scene;
+- only memory that is current, authorized, scope-compatible, unexpired, and retrieval-enabled reaches ranking and budget selection.
+
+The result is the current ordinary-scene preference: “default to aisle.” **Even if an older sentence is semantically closer to the query, an ineligible memory never gets a chance to win the ranking stage.**
+
+That is the central difference between Mnemosyne and “put the chat log in a vector database.” Mnemosyne is not trying to preserve as much of the past as possible. It maintains **memory state that can change, be audited, and leave the current context without falsifying history**.
+
+## The actual path from conversation to recall
 
 ```text
-“Meeting is on Monday.”
-        │
-        │ later
-        ▼
-“Meeting is now on Thursday.”
-        │
-        ▼
-source evidence is preserved
-        │
-        ▼
-a governed decision makes Thursday current
-        │
-        ▼
-Monday remains history; Thursday is eligible as current truth
+transcript / structured host evidence
+                 │
+                 ├──> Episode Projection
+                 │     (rebuildable evidence directory; no automatic memory authority)
+                 │
+                 ▼
+        retention + candidate/proposal
+                 │
+                 ▼
+      registered policy / confirmation
+                 │
+                 ▼
+          Mnemosyne governance
+                 │
+                 ▼
+       append-only memory events   <── canonical authority
+                 │
+                 ├──> current memory projection
+                 └──> search / index projections
+                      (all rebuildable)
+
+scene + query + retrieval intent
+                 │
+                 ▼
+             Anamnesis
+                 │
+                 ▼
+ eligibility gates
+ authority / lifecycle / scope / realm /
+ sensitivity / expiry / permission / conflict
+                 │
+                 ▼
+          ranking + budget
+                 │
+                 ▼
+          MemoryReadPacket
+                 └──> metadata-only audit
 ```
 
-Nothing needs to pretend Monday was never said. The important distinction is that **historical evidence and current memory are not the same thing**.
-
-That one example captures most of the design:
-
-- **Evidence is not automatically memory.** Something being present in a transcript does not make it durable truth.
-- **Retention comes before long-term admission.** Session-only and episodic material do not become ordinary long-term candidates just because they also resemble a preference, relationship, or project fact.
-- **Eligibility comes before ranking.** Scope, lifecycle, authority, sensitivity, expiry, relationship/project/AU boundaries, and retrieval permission decide whether a memory may appear at all.
-- **Old facts can be superseded instead of erased.** History remains inspectable while current truth changes.
-- **Indexes are rebuildable.** Durable event history is authority; current views and search projections are derived state.
-- **The host stays in charge.** Mnemosyne does not own your model provider, persona, transport, UI, or deployment identity.
+Musagetes / Muses may help produce retrieval or candidate-writing intent, and decision automation may defer candidate processing or retry provider failures. None of them may bypass governance, and “the model thinks this should be remembered” never becomes durable authority by itself.
 
 ## Try it locally
 
@@ -69,28 +121,28 @@ Install directly from GitHub:
 npm install github:Gwendolenmave/mnemosyne
 ```
 
-To see a complete write-and-recall flow without wiring a whole assistant, clone the repository and run:
+To run a complete governed write + recall without wiring a full assistant:
 
 ```sh
+git clone https://github.com/Gwendolenmave/mnemosyne.git
+cd mnemosyne
 npm ci
 npm run example:local
 ```
 
-The example creates a temporary SQLite store, registers a synthetic policy, writes one governed memory, recalls it through Anamnesis, and removes the temporary data again.
+The example creates a temporary SQLite store, registers a synthetic policy, writes one governed memory, recalls it through Anamnesis, and removes the temporary data.
 
-For repository verification:
+For full repository verification:
 
 ```sh
 npm run verify
 ```
 
-Normal package use requires Node and npm. Full repository verification also uses Python 3 for privacy checks.
+Normal package use requires Node and npm. Full repository verification also uses Python 3 for privacy scanning.
 
-## Put it inside a host runtime
+## Embed it in your runtime
 
-Mnemosyne deliberately does **not** own your provider, transcript transport, clock, backup destination, audit sink, or deployment policy. The host supplies those boundaries.
-
-The package exposes stable storage, governance, curation, retention, recall, decision, and automation concepts from one ESM entry point. Prefer package-root namespaces such as `Governance`, `Curation`, `Retention`, `Anamnesis`, and `SqliteMnemosyne` over depending on individual internal service files.
+The package exposes stable concepts from one ESM root entry point. Host integrations should prefer package-root namespaces rather than depending on the internal file layout.
 
 ```ts
 import {
@@ -115,69 +167,61 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-That snippet only shows the shape of retention classification and the read side. A complete governed write-and-read example lives in [`examples/local-flow.ts`](examples/local-flow.ts). Read [Integration](docs/INTEGRATION.md) before connecting real evidence or a live transport.
+This only shows the shape of the retention contract and read side. The complete governed write + recall example lives in [`examples/local-flow.ts`](examples/local-flow.ts). Read [Integration](docs/INTEGRATION.md) before connecting real evidence or a live transport.
 
-## What the names mean
+## What the core pieces own
 
-The Greek names are a responsibility map, not something you need to memorize before using the package.
-
-| Name | Responsibility |
+| Component | Responsibility |
 | --- | --- |
-| **Mnemosyne** | durable memory lifecycle and governance |
-| **Anamnesis** | recall: filter for eligibility, then rank and budget |
-| **Lethe** | material that should no longer surface normally, without pretending history never happened |
-| **Musagetes** | combines active continuity lenses into retrieval and candidate-writing intent |
-| **Muses** | describe what kind of continuity the current moment needs |
+| **Mnemosyne** | durable-memory write authority, lifecycle, and governance |
+| **Anamnesis** | recall: eligibility first, then ranking / budget |
+| **Lethe** | lets expired / revoked / superseded / retrieval-disabled material leave ordinary recall without pretending it never existed |
+| **Retention** | distinguishes short-lived, episodic, and long-term-candidate material before ordinary long-term admission |
+| **Curation** | formal KEEP / REVISE / REVOKE / RECLASSIFY_AU / SUPERSEDE / MERGE / EPISODIC_ONLY actions |
+| **Episode Projection** | organizes evidence into rebuildable structures; summaries do not automatically become Memory Cards |
+| **Musagetes / Muses** | describe continuity intent; they may shape intent but do not own durable-memory authority |
+| **Memory event history** | canonical durable authority; current views and indexes are projections |
 
-If you are changing those boundaries, use [Architecture](docs/ARCHITECTURE.md) as the normative contract rather than inferring behavior from the mythology.
+The Greek names are a responsibility map, not required lore. For ownership, dependency direction, and failure semantics, [Architecture](docs/ARCHITECTURE.md) is the normative contract.
 
-## What Mnemosyne does — and does not do
+## Five design rules that matter most
 
-Mnemosyne **does** provide:
+1. **Evidence ≠ memory.** Being said is not the same as being authorized as durable truth.
+2. **History ≠ current truth.** An old fact may leave current memory without being erased from history.
+3. **Eligibility comes before ranking.** An ineligible memory cannot recover by having a higher similarity score.
+4. **Model proposal ≠ authority.** Automation may propose, queue, and retry; it may not grant durable truth to itself.
+5. **Index ≠ authority.** Event history is canonical; projections and indexes must be rebuildable.
 
-- governed memory writes with canonical evidence, provenance, and policy/confirmation boundaries;
-- lifecycle operations such as revision, expiry, revocation, supersession, retrieval disablement, and authorized deletion flow;
-- replay-safe policy repair and formal curation through one governance writer;
-- portable retention classification so short-lived or episodic evidence can stop before ordinary long-term admission;
-- recall that filters for eligibility before similarity/ranking;
-- append-only event authority with rebuildable current views and indexes;
-- metadata-only audit paths so diagnostics do not become a second hidden memory store.
+## What Mnemosyne deliberately does not own
 
-Mnemosyne **does not** provide:
+Mnemosyne is a library / subsystem, not a complete chatbot platform. It does not own:
 
-- a chatbot UI or hosted service;
-- a model provider or model account;
-- a persona system;
-- ownership of your transcripts or deployment identity;
-- permission to promote arbitrary model output or transcript text into durable truth.
+- the model provider or provider account;
+- persona or system-prompt authority;
+- transcript transport or UI;
+- deployment principals, process supervision, or machine identity;
+- backup destination, trusted clock, audit sink, or network policy.
 
-## Privacy: the host owns the real data
+Those belong to the host. Keeping that boundary explicit prevents the memory domain from becoming coupled to one Telegram bot, one machine, or one model account.
 
-The public repository contains source code, public documentation, schemas, and synthetic fixtures. Real runtime material belongs outside the repository, including memory databases, transcripts, queues, logs, backups, prompts, provider responses, credentials, account identifiers, and machine-specific paths.
+## Privacy and implementation status
 
-Network behavior also belongs to the host boundary: Mnemosyne itself is a library, not a cloud service. See [Privacy model](docs/PRIVACY-MODEL.md) for the repository/runtime/network split.
+The repository should contain source code, public documentation, schemas, and explicit synthetic fixtures only. Real memory databases, transcripts, queues, logs, backups, prompts, provider responses, credentials, account identifiers, and machine-specific paths belong outside the repository. See [Privacy model](docs/PRIVACY-MODEL.md) for the complete boundary.
 
-## Public status boundary
+The README explains the model. **For what is actually merged and verified today, use [Status](docs/STATUS.md).** Specification, source, tests, package state, releases, and live deployment are distinct states; the README does not present unmerged design work as available functionality.
 
-The current repository documents and tests the behavior that is actually merged here. It does **not** use “compatibility” as shorthand for current-private parity. Specification, source bytes, tests, merge state, package publication, and live deployment are separate states. Embedding/vector/hybrid retrieval is intentionally outside the current non-embedding governance/retention parity work; see [Status](docs/STATUS.md) for the current public matrix.
+## Documentation map
 
-## If you are changing the code
-
-README is the human map. [Architecture](docs/ARCHITECTURE.md) is the normative contract for agents and maintainers.
-
-The next documents are deliberately few:
-
-- **embed Mnemosyne:** [Integration](docs/INTEGRATION.md)
-- **check implementation coverage:** [Status](docs/STATUS.md)
-- **check repository/runtime/network boundaries:** [Privacy model](docs/PRIVACY-MODEL.md)
-- **change ownership, authority, lifecycle, or dependency rules:** [Architecture](docs/ARCHITECTURE.md)
-
-When implementation and Architecture disagree, inspect the current code and tests instead of guessing which prose was intended.
+| I want to… | Read this |
+| --- | --- |
+| integrate Mnemosyne into a host runtime | [Integration](docs/INTEGRATION.md) |
+| inspect current implementation coverage | [Status](docs/STATUS.md) |
+| understand data and network boundaries | [Privacy model](docs/PRIVACY-MODEL.md) |
+| change ownership / lifecycle / authority / dependencies | [Architecture](docs/ARCHITECTURE.md) |
+| report a bug or security issue | [Contributing](CONTRIBUTING.md) / [Security](SECURITY.md) |
 
 ## Licence and maintenance
 
 Mnemosyne uses the [PolyForm Noncommercial License 1.0.0](LICENSE.md). Personal use, study, modification, and noncommercial sharing are permitted under the licence; commercial use requires separate permission.
 
-The licensor and maintainer is **Gwendolen** (`@Gwendolenmave` on GitHub).
-
-The project uses closed maintenance. Bug reports and responsible security reports remain welcome; see [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md).
+The licensor and maintainer is **Gwendolen** (`@Gwendolenmave` on GitHub). The project uses closed maintenance, while bug reports and responsible security reports remain welcome.
