@@ -1,5 +1,7 @@
 # Mnemosyne
 
+<!-- scan:allow-file private:principal private:principal_alias -->
+
 [English](README.md)
 
 **个人 AI 的记忆不该只是“搜到最像的一段旧文本”。Mnemosyne 让一条记忆拥有来源、寿命、权限、边界和历史。**
