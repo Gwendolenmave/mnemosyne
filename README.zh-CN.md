@@ -12,11 +12,11 @@ Mnemosyne 是一个 local-first、model-neutral 的 governed memory library。�
 
 ## 一个完整例子，比功能表更快
 
-假设一个叫 **Mira** 的人和她的助手相处了几个月。
+假设人类用户 **Atalanta** 和她的助手 **Artemis** 已经相处了几个月。
 
 ### 1. 一句话先是 evidence，不是 memory
 
-Mira 在普通对话里说：
+Atalanta 在普通对话里说：
 
 > “以后坐长途火车，我默认选靠窗。”
 
@@ -26,7 +26,7 @@ Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍�
 
 ### 2. 临时例外不会偷偷改写长期偏好
 
-几周后，Mira 又说：
+几周后，Atalanta 又说：
 
 > “这趟和朋友一起，临时坐过道，只这一次。”
 
@@ -36,13 +36,13 @@ Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍�
 
 晚上她进入一个叫 **Nocturne** 的 AU：
 
-> “这个世界里的 Mira 从来不坐窗边。”
+> “这个世界里的 Atalanta 从来不坐窗边。”
 
-这条 evidence 属于另一个 realm。即使文本里同样出现了 “Mira”“座位”“窗边”，它也不是 ordinary scene 的候选事实。AU / realm 边界是 eligibility boundary，不是一个可以被高 similarity score 冲掉的小权重。
+这条 evidence 属于另一个 realm。即使文本里同样出现了 “Atalanta”“座位”“窗边”，它也不是 ordinary scene 的候选事实。AU / realm 边界是 eligibility boundary，不是一个可以被高 similarity score 冲掉的小权重。
 
 ### 4. 真正的长期变化会更新 current truth，但不抹掉历史
 
-两个月后，Mira 在普通对话里明确说：
+两个月后，Atalanta 在普通对话里明确说：
 
 > “我真的改了，以后默认坐过道。”
 
@@ -52,9 +52,9 @@ Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍�
 
 ### 5. 真正召回时，先判断“能不能出现”，再判断“像不像”
 
-下一周，ordinary scene 里有人问：
+下一周，在 ordinary scene 里，Artemis 收到一个请求：
 
-> “给 Mira 订下一趟火车，座位选哪边？”
+> “给 Atalanta 订下一趟火车，座位选哪边？”
 
 Anamnesis 会先把不合格的东西挡在 ranking 之前：
 
