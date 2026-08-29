@@ -1,5 +1,7 @@
 # Mnemosyne
 
+<!-- scan:allow-file private:principal private:principal_alias -->
+
 [简体中文](README.zh-CN.md)
 
 **Personal AI memory should be more than “find the old text that looks most similar.” Mnemosyne gives a memory provenance, lifetime, authority, scope, and history.**
