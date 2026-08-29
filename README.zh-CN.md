@@ -1,65 +1,115 @@
 # Mnemosyne
 
-<!-- scan:allow-file private:principal private:principal_alias -->
-
 [English](README.md)
 
-**给个人 AI 的长期记忆，但“什么可以被记住、什么时候可以被想起”都有明确规则。**
+**个人 AI 的记忆不该只是“搜到最像的一段旧文本”。Mnemosyne 让一条记忆拥有来源、寿命、权限、边界和历史。**
 
-Mnemosyne 解决的是普通 vector store 自己解决不了的那一部分。
+如果 vector search 回答的是“以前有哪些话和现在很像？”，Mnemosyne 更关心另外几个问题：**这句话够不够资格成为长期记忆？它现在还是真的吗？它属于哪个场景？此刻允许被想起吗？如果它后来变了，旧事实应该去哪？**
 
-找到“和当前消息相似的旧文本”当然有用，但长期记忆还要回答更多问题：这条事实现在还有效吗？它真的被授权成持久记忆了吗？它只属于某个项目、关系或虚构世界吗？当前场景有资格看到它吗？两条记忆冲突时，哪条是当前事实，哪条只是历史？
+Mnemosyne 是一个 local-first、model-neutral 的 governed memory library。它最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但可以嵌进别的个人 AI runtime；host 继续拥有 provider、persona、transport、UI 和部署方式。
 
-Mnemosyne 把这些问题拆开，而不是全塞进一个 similarity score 里。
+## 一个完整例子，比功能表更快
 
-## 从这里开始
+假设一个叫 **Mira** 的人和她的助手相处了几个月。
 
-| 我想…… | 先看这里 |
-| --- | --- |
-| 用一分钟理解它为什么存在 | [60 秒模型](#60-秒模型) |
-| 在自己电脑上先跑一下 | [本地试跑](#本地试跑) |
-| 把它接进另一个 runtime | [Integration](docs/INTEGRATION.md) |
-| 看现在到底实现了哪些能力 | [Status](docs/STATUS.md) |
-| 看清楚隐私与数据边界 | [Privacy model](docs/PRIVACY-MODEL.md) |
-| 修改 Mnemosyne 本身 | **先读 [Architecture](docs/ARCHITECTURE.md)** |
+### 1. 一句话先是 evidence，不是 memory
 
-Mnemosyne 最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但 package 本身与模型无关，也可以嵌入其他个人 AI runtime。
+Mira 在普通对话里说：
 
-## 60 秒模型
+> “以后坐长途火车，我默认选靠窗。”
 
-假设一个项目会议原来在周一，现在改到了周四。
+这句话先进入 transcript evidence。它证明“这句话被说过”，但不会因为出现过就自动变成长期事实。
 
-普通 vector store 很可能把两句话都留下来，然后在以后查询时返回“看起来更相似”的那条。Mnemosyne 会把这次变化当成 lifecycle 变化来处理：
+Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍然需要经过 candidate / proposal，以及**已注册 policy 或明确 confirmation**。只有通过 governed write path 以后，它才会产生 durable lifecycle event，并进入当前 memory projection。
+
+### 2. 临时例外不会偷偷改写长期偏好
+
+几周后，Mira 又说：
+
+> “这趟和朋友一起，临时坐过道，只这一次。”
+
+这条信息和“座位偏好”非常相似，但它的寿命不同。它可以被保留为 episodic / short-lived evidence，却不应该因为 embedding 很像，就把“默认靠窗”覆盖掉。
+
+### 3. 虚构世界里的事实也不会漏回现实场景
+
+晚上她进入一个叫 **Nocturne** 的 AU：
+
+> “这个世界里的 Mira 从来不坐窗边。”
+
+这条 evidence 属于另一个 realm。即使文本里同样出现了 “Mira”“座位”“窗边”，它也不是 ordinary scene 的候选事实。AU / realm 边界是 eligibility boundary，不是一个可以被高 similarity score 冲掉的小权重。
+
+### 4. 真正的长期变化会更新 current truth，但不抹掉历史
+
+两个月后，Mira 在普通对话里明确说：
+
+> “我真的改了，以后默认坐过道。”
+
+新的 evidence 再次经过治理。一个 revision / supersession 可以让“默认坐过道”成为当前事实，而旧的“默认靠窗”退出现行 recall。
+
+旧事实没有被假装成“从未发生”。它仍然留在 append-only event history 里，连同 provenance、authority 和 lifecycle 变化一起可追溯；当前 view 只是由这些事件折叠出来的 projection。
+
+### 5. 真正召回时，先判断“能不能出现”，再判断“像不像”
+
+下一周，ordinary scene 里有人问：
+
+> “给 Mira 订下一趟火车，座位选哪边？”
+
+Anamnesis 会先把不合格的东西挡在 ranking 之前：
+
+- 旧的“默认靠窗”已经被 supersede；
+- “这趟临时坐过道”只是短期 / episodic exception；
+- Nocturne AU 的事实不属于当前 scene；
+- 只有当前、获准、scope 匹配、未过期、允许 retrieval 的 memory 才进入后续 ranking 和 budget。
+
+最后返回的是当前普通场景有资格使用的“默认坐过道”。**哪怕某条旧句子在语义上更像当前 query，它只要不合格，就连参加排名的资格都没有。**
+
+这就是 Mnemosyne 和“把聊天记录塞进向量库”最根本的差别：它不是尽量多地保存过去，而是维护一套**可以变化、可以追责、可以退出当前语境的记忆状态**。
+
+## 从对话到回忆，真正的数据流
 
 ```text
-“会议在周一。”
-        │
-        │ 后来
-        ▼
-“会议现在改到周四。”
-        │
-        ▼
-原始 source evidence 继续保留
-        │
-        ▼
-受治理决策让“周四”成为当前事实
-        │
-        ▼
-“周一”留在历史里；“周四”作为当前 truth 有资格被召回
+transcript / structured host evidence
+                 │
+                 ├──> Episode Projection
+                 │     （可重建的 evidence 目录，不自动获得 memory authority）
+                 │
+                 ▼
+        retention + candidate/proposal
+                 │
+                 ▼
+      registered policy / confirmation
+                 │
+                 ▼
+          Mnemosyne governance
+                 │
+                 ▼
+       append-only memory events   <── canonical authority
+                 │
+                 ├──> current memory projection
+                 └──> search / index projections
+                      （都必须可重建）
+
+scene + query + retrieval intent
+                 │
+                 ▼
+             Anamnesis
+                 │
+                 ▼
+ eligibility gates
+ authority / lifecycle / scope / realm /
+ sensitivity / expiry / permission / conflict
+                 │
+                 ▼
+          ranking + budget
+                 │
+                 ▼
+          MemoryReadPacket
+                 └──> metadata-only audit
 ```
 
-这里不需要假装“周一”从未被说过。真正重要的是：**历史证据和当前记忆不是同一种东西。**
+Musagetes / Muses 可以参与生成 retrieval 或 candidate-writing intent；decision automation 也可以延迟处理 candidate、重试 provider failure。它们都不能绕过 governance，也不会因为“模型觉得这应该记住”就自动获得 durable authority。
 
-这个例子基本已经包含了整套设计：
-
-- **Evidence 不会自动变成 memory。** Transcript 里出现过，不代表它就是持久事实。
-- **先判断该活多久，再判断能不能进入 long-term。** Session-only 和 episodic material 不会仅因为同时看起来像 preference、relationship 或 project fact 就被误升成长记忆。
-- **先判断有没有资格出现，再谈排序。** Scope、lifecycle、authority、sensitivity、expiry、关系/项目/AU 边界和 retrieval permission 先决定“能不能出现”。
-- **旧事实可以被 supersede，而不是直接抹掉。** 当前 truth 会更新，历史仍然可追。
-- **Index 是可重建的。** Durable event history 才是 authority；当前 view 和 search projection 都是派生状态。
-- **Host 仍然拥有系统。** Mnemosyne 不接管 model provider、persona、transport、UI 或 deployment identity。
-
-## 本地试跑
+## 先跑起来
 
 需要 **Node.js 22.22 或更新版本**。
 
@@ -69,14 +119,16 @@ Mnemosyne 最初为 [Delos](https://github.com/Gwendolenmave/delos) 构建，但
 npm install github:Gwendolenmave/mnemosyne
 ```
 
-如果想先看完整写入 + 召回流程，又不想先接整套助手，可以 clone 仓库后运行：
+如果想先看一个完整的 governed write + recall，而不接整套助手：
 
 ```sh
+git clone https://github.com/Gwendolenmave/mnemosyne.git
+cd mnemosyne
 npm ci
 npm run example:local
 ```
 
-示例会创建临时 SQLite store，注册一条合成 policy，写入一条受治理 memory，再通过 Anamnesis 召回，最后清掉临时数据。
+这个示例会创建临时 SQLite store、注册合成 policy、写入一条受治理 memory、通过 Anamnesis 召回，然后清理临时数据。
 
 完整仓库验收：
 
@@ -84,13 +136,11 @@ npm run example:local
 npm run verify
 ```
 
-正常使用 package 只需要 Node 和 npm；完整仓库验收还会使用 Python 3 做隐私检查。
+正常使用 package 只需要 Node 和 npm；完整仓库验收还会用 Python 3 做隐私扫描。
 
-## 把它接进 host runtime
+## 接进自己的 runtime
 
-Mnemosyne 刻意**不拥有**你的 provider、transcript transport、clock、backup destination、audit sink 或 deployment policy。这些边界都由 host 提供。
-
-Package 通过一个 ESM 根入口暴露稳定的 storage、governance、curation、retention、recall、decision 与 automation 概念。优先使用 `Governance`、`Curation`、`Retention`、`Anamnesis`、`SqliteMnemosyne` 这些 package-root namespace，而不是把单个内部 service 文件路径当成兼容性承诺。
+Package 通过一个 ESM 根入口暴露稳定概念。Host integration 应优先使用 package-root namespace，而不是依赖内部文件布局。
 
 ```ts
 import {
@@ -115,69 +165,61 @@ const packet = Anamnesis.buildMemoryReadPacket({
 });
 ```
 
-这段只展示 retention classification 和 read side 的形状。完整可运行的 governed write + recall 例子在 [`examples/local-flow.ts`](examples/local-flow.ts)。接真实 evidence 或 live transport 前，请先读 [Integration](docs/INTEGRATION.md)。
+这段只展示 retention contract 和 read side 的形状。完整 governed write + recall 在 [`examples/local-flow.ts`](examples/local-flow.ts)；接真实 evidence 或 live transport 前请看 [Integration](docs/INTEGRATION.md)。
 
-## 这些名字分别负责什么
+## 核心部件在负责什么
 
-希腊神话命名只是职责地图，不是使用 package 前必须背下来的世界观。
-
-| 名字 | 负责什么 |
+| 部件 | 职责 |
 | --- | --- |
-| **Mnemosyne** | durable memory 的 lifecycle 与 governance |
-| **Anamnesis** | recall：先过滤 eligibility，再 ranking 和 budget |
-| **Lethe** | 正常情况下不该再出现的 material，但不假装历史从未发生 |
-| **Musagetes** | 把当前 continuity lens 组合成 retrieval / candidate-writing intent |
-| **Muses** | 描述当前时刻需要保护哪一种连续性 |
+| **Mnemosyne** | durable memory 的 write authority、lifecycle 与 governance |
+| **Anamnesis** | recall：先做 eligibility，再 ranking / budget |
+| **Lethe** | 让 expired / revoked / superseded / retrieval-disabled material 退出普通召回，而不是伪造“从未发生” |
+| **Retention** | 在进入 ordinary long-term admission 前区分短期、episodic 与可长期候选 material |
+| **Curation** | KEEP / REVISE / REVOKE / RECLASSIFY_AU / SUPERSEDE / MERGE / EPISODIC_ONLY 等正式整理动作 |
+| **Episode Projection** | 把 evidence 组织成可重建结构；summary 本身不自动升级成 Memory Card |
+| **Musagetes / Muses** | 描述当前 continuity intent；它们影响 intent，不拥有 durable memory authority |
+| **Memory event history** | canonical durable authority；current view 和 index 都是 projection |
 
-如果你是在改这些边界，请以 [Architecture](docs/ARCHITECTURE.md) 为准，不要从神话名字反推实现。
+希腊神话命名只是职责地图。真正的 ownership、dependency direction 和 failure semantics 以 [Architecture](docs/ARCHITECTURE.md) 为准。
 
-## Mnemosyne 做什么，也不做什么
+## 五条最重要的设计原则
 
-Mnemosyne **会做**：
+1. **Evidence ≠ memory。** 被说过，不等于被授权成长期事实。
+2. **History ≠ current truth。** 旧事实可以退出当前记忆，但不必被抹掉。
+3. **Eligibility 在 ranking 之前。** 没资格出现的 memory，不靠更高 similarity 翻盘。
+4. **Model proposal ≠ authority。** 自动化可以提议、排队、重试，但不能自己授予 durable truth。
+5. **Index ≠ authority。** Event history 才是 canonical；projection / index 必须可以重建。
 
-- 带 canonical evidence、provenance、policy / confirmation 边界的 governed memory write；
-- revision、expiry、revocation、supersession、retrieval disablement 和授权删除等 lifecycle 操作；
-- 通过唯一 governance writer 执行 replay-safe 的 policy repair 和 formal curation；
-- 通过 portable retention contract 让短生命周期 / episodic evidence 在 ordinary long-term admission 之前停下来；
-- 先做 eligibility 过滤，再进行 similarity / ranking 的 recall；
-- append-only event authority，以及可重建的当前 view / index；
-- metadata-only audit，避免诊断日志偷偷变成第二套 memory store。
+## Mnemosyne 刻意不接管什么
 
-Mnemosyne **不会做**：
+Mnemosyne 是 library / subsystem，不是完整 chatbot 平台。它不拥有：
 
-- chatbot UI 或 hosted service；
-- model provider 或模型账号；
-- persona system；
-- 接管你的 transcript 或 deployment identity；
-- 自动把任意 model output / transcript text 提升成 durable truth。
+- model provider 或账号；
+- persona / system prompt authority；
+- transcript transport 与 UI；
+- deployment principal、process supervision 或机器身份；
+- backup destination、real clock、audit sink 或网络策略。
 
-## 隐私：真实数据归 host 所有
+这些都属于 host。这样 memory domain 才不会和某个 Telegram bot、某台机器、某个模型账号绑死。
 
-公开仓库只包含源码、公开文档、schema 和明确的合成 fixture。真实运行时数据应该留在仓库之外，包括 memory database、transcript、queue、log、backup、prompt、provider response、credential、账号标识和机器路径。
+## 隐私与实现状态
 
-网络行为也属于 host 边界：Mnemosyne 是 library，不是云服务。仓库 / runtime / network 的完整划分见 [Privacy model](docs/PRIVACY-MODEL.md)。
+仓库里应该只有源码、公开文档、schema 和明确的合成 fixture。真实 memory database、transcript、queue、log、backup、prompt、provider response、credential、账号标识和机器路径都应该留在仓库之外；完整边界见 [Privacy model](docs/PRIVACY-MODEL.md)。
 
-## 公开状态边界
+README 只介绍系统怎么思考。**当前到底合并了哪些能力，以 [Status](docs/STATUS.md) 为准。** Spec、source、tests、package、release 和 live deployment 是不同状态；README 不把尚未合并的设计写成已经可用。
 
-当前文档和测试只描述**真正已经合并到这个 public repository 的行为**，不会再把 compatibility 当成“当前 private parity”的简称。Spec、source bytes、tests、merge state、package publication 和 live deployment 是不同状态。Embedding / vector / hybrid retrieval 明确不属于当前这轮 non-embedding governance / retention parity；当前公开矩阵见 [Status](docs/STATUS.md)。
+## 文档地图
 
-## 如果你要改代码
-
-README 是给人看的地图；[Architecture](docs/ARCHITECTURE.md) 才是给施工机和维护者的规范合同。
-
-后续文档刻意保持很少：
-
-- **接入 Mnemosyne：** [Integration](docs/INTEGRATION.md)
-- **检查实现覆盖：** [Status](docs/STATUS.md)
-- **检查仓库 / runtime / network 边界：** [Privacy model](docs/PRIVACY-MODEL.md)
-- **修改 ownership、authority、lifecycle 或 dependency 规则：** [Architecture](docs/ARCHITECTURE.md)
-
-如果实现和 Architecture 对不上，不要猜哪一边“本来应该”是真的；直接检查当前代码和测试。
+| 你要做什么 | 看这里 |
+| --- | --- |
+| 接入自己的 host runtime | [Integration](docs/INTEGRATION.md) |
+| 查看当前实现覆盖 | [Status](docs/STATUS.md) |
+| 理解数据与网络边界 | [Privacy model](docs/PRIVACY-MODEL.md) |
+| 修改 ownership / lifecycle / authority / dependency | [Architecture](docs/ARCHITECTURE.md) |
+| 提交 bug 或安全报告 | [Contributing](CONTRIBUTING.md) / [Security](SECURITY.md) |
 
 ## 许可证与维护
 
 Mnemosyne 使用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)。依照许可证，可以个人使用、学习、修改和非商业分享；商业使用需要另行许可。
 
-许可人与维护者为 **Gwendolen**（GitHub：`@Gwendolenmave`）。
-
-项目采用封闭维护模式。Bug report 与负责任的安全报告仍然欢迎；见 [Contributing](CONTRIBUTING.md) 和 [Security](SECURITY.md)。
+许可人与维护者为 **Gwendolen**（GitHub：`@Gwendolenmave`）。项目采用封闭维护模式，但仍欢迎 bug report 与负责任的安全报告。
