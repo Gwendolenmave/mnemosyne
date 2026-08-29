@@ -12,11 +12,11 @@ Mnemosyne is a local-first, model-neutral governed memory library. It was origin
 
 ## One end-to-end example is faster than a feature list
 
-Imagine a person named **Mira** has been using the same assistant for several months.
+Imagine a human user named **Atalanta** and her assistant **Artemis** have been talking for several months.
 
 ### 1. A sentence begins as evidence, not memory
 
-In an ordinary conversation, Mira says:
+In an ordinary conversation, Atalanta says:
 
 > “For long train trips, default to a window seat for me.”
 
@@ -26,7 +26,7 @@ Retention can identify it as material worth considering for long-term admission.
 
 ### 2. A temporary exception does not silently rewrite a durable preference
 
-A few weeks later, Mira says:
+A few weeks later, Atalanta says:
 
 > “For this trip with my friend, use an aisle seat just this once.”
 
@@ -36,13 +36,13 @@ This is extremely similar to the original seat preference, but its lifetime is d
 
 That evening she enters an AU called **Nocturne**:
 
-> “In this world, Mira never sits by the window.”
+> “In this world, Atalanta never sits by the window.”
 
-This evidence belongs to another realm. Even though it contains the same entities and concepts — Mira, seats, windows — it is not an ordinary-scene fact. AU / realm separation is an eligibility boundary, not a small ranking weight that a large similarity score can overpower.
+This evidence belongs to another realm. Even though it contains the same entities and concepts — Atalanta, seats, windows — it is not an ordinary-scene fact. AU / realm separation is an eligibility boundary, not a small ranking weight that a large similarity score can overpower.
 
 ### 4. A real long-term change updates current truth without erasing history
 
-Two months later, back in ordinary conversation, Mira says:
+Two months later, back in ordinary conversation, Atalanta says:
 
 > “I really changed my mind. From now on, default to an aisle seat.”
 
@@ -52,9 +52,9 @@ The old fact is not rewritten into “it was never said.” It remains in append
 
 ### 5. Recall asks “may this appear?” before it asks “how similar is it?”
 
-The next week, in an ordinary scene, someone asks:
+The next week, in an ordinary scene, Artemis receives a request:
 
-> “Which seat should I choose for Mira’s next train?”
+> “Which seat should I choose for Atalanta’s next train?”
 
 Anamnesis removes ineligible material before ranking:
 
