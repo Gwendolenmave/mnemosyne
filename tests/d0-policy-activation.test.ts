@@ -1,7 +1,7 @@
 /**
  * D0 §7 adversarial fixtures 10–17: policy-activated retrieval semantics,
  * honest confirmation state, precedence, supersession with history,
- * AU/reality isolation, intimate existence-hiding, Core/Prior byte
+ * AU/reality labelling, intimate classification, Core/Prior byte
  * safety, and the five-pending reconciliation. SYNTHETIC content only.
  */
 
@@ -249,9 +249,9 @@ test("D0 §7.13: explicit new state supersedes an older card without erasing his
   handle.log.close();
 });
 
-// ---- §7.14: AU / reality isolation ----------------------------------------
+// ---- §7.14: AU / reality labelling ----------------------------------------
 
-test("D0 §7.14: AU and reality cards with the same entity cannot cross-contaminate", async () => {
+test("D0 §7.14: AU and reality cards coexist with explicit model-visible realm metadata", async () => {
   const { service, handle } = await buildService("au");
   const reality = await service.proposeUnderPolicy({
       body: "synthetic 现实层有一个编号 R7 的档案箱。",
@@ -289,7 +289,7 @@ test("D0 §7.14: AU and reality cards with the same entity cannot cross-contamin
     nowIso: NOW_ISO,
   });
   assert.ok(ordinary.memories.some((m) => m.id === reality.memoryId));
-  assert.ok(!ordinary.memories.some((m) => m.id === au.memoryId), "AU card never leaks to ordinary");
+  assert.equal(ordinary.memories.find((m) => m.id === au.memoryId)?.auId, "au-synthetic-1");
 
   const inAu = buildMemoryReadPacket({
     source: handle.store,
@@ -305,13 +305,13 @@ test("D0 §7.14: AU and reality cards with the same entity cannot cross-contamin
     scene: { mode: "au", auId: "au-synthetic-OTHER", intimacyActive: false },
     nowIso: NOW_ISO,
   });
-  assert.ok(!otherAu.memories.some((m) => m.id === au.memoryId), "no cross-AU leak");
+  assert.ok(otherAu.memories.some((m) => m.id === au.memoryId), "scene selection is ranking advice, not isolation");
   handle.log.close();
 });
 
-// ---- §7.15: intimate existence-hiding -------------------------------------
+// ---- §7.15: intimate classification ---------------------------------------
 
-test("D0 §7.15: intimate policy-activated material stays hidden outside authorized scope", async () => {
+test("D0 §7.15: intimate policy-activated material is retrievable without a context gate", async () => {
   const { service, handle } = await buildService("intimate");
   const intimate = await service.proposeUnderPolicy({
       body: "synthetic intimate fixture token OMEGA，仅用于权限隔离测试。",
@@ -328,16 +328,16 @@ test("D0 §7.15: intimate policy-activated material stays hidden outside authori
   assert.equal(intimate.status, "ok");
   if (intimate.status !== "ok") return;
   const card = service.getCard(intimate.memoryId)!;
-  assert.equal(card.retrieval, "disabled", "intimate default: retrieval disabled (existence-hiding)");
+  assert.equal(card.retrieval, "enabled", "intimate classification is not a default retrieval-off");
   const verdict = isEligible(card as never, { mode: "ordinary", intimacyActive: false }, NOW_ISO);
-  assert.equal(verdict.ok, false);
+  assert.equal(verdict.ok, true);
   const packet = buildMemoryReadPacket({
     source: handle.store,
     query: "synthetic私密标记",
     scene: { mode: "ordinary", intimacyActive: true },
     nowIso: NOW_ISO,
   });
-  assert.deepEqual(packet.memories, [], "even an intimate scene needs the explicit retrieval override");
+  assert.equal(packet.memories.some((memory) => memory.id === intimate.memoryId), true);
   handle.log.close();
 });
 

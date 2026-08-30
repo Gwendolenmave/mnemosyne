@@ -225,7 +225,7 @@ test("revoke removes retrieval eligibility but preserves the audit trail", async
   handle.log.close();
 });
 
-test("AU-scoped cards never leak across AUs or into ordinary scenes", async () => {
+test("AU-scoped cards stay explicitly labelled without scene-based retrieval isolation", async () => {
   const audit: Array<Record<string, unknown>> = [];
   const { service, handle } = buildService(freshDb("au"), audit);
   const proposed = await service.propose({
@@ -240,14 +240,15 @@ test("AU-scoped cards never leak across AUs or into ordinary scenes", async () =
   assert.equal(proposed.status, "ok");
   if (proposed.status !== "ok") return;
   await service.approve(proposed.memoryId, "owner");
-  assert.deepEqual(retrievalBodies(handle, "教室 山顶"), []);
+  assert.equal(retrievalBodies(handle, "教室 山顶").length, 1);
   const wrongAu = buildMemoryReadPacket({
     source: handle.store,
     query: "教室在哪",
     scene: { mode: "au", auId: "au-y", intimacyActive: false },
     nowIso: "2026-07-12T00:00:00.000Z",
   });
-  assert.deepEqual(wrongAu.memories, []);
+  assert.equal(wrongAu.memories.length, 1);
+  assert.equal(wrongAu.memories[0]?.auId, "au-x");
   const rightAu = buildMemoryReadPacket({
     source: handle.store,
     query: "教室在哪",
@@ -258,7 +259,7 @@ test("AU-scoped cards never leak across AUs or into ordinary scenes", async () =
   handle.log.close();
 });
 
-test("intimate cards respect retrieval policy after approval", async () => {
+test("intimate cards are retrievable after approval without an intimacy gate", async () => {
   const audit: Array<Record<string, unknown>> = [];
   const { service, handle } = buildService(freshDb("intimate"), audit);
   const proposed = await service.propose({
@@ -272,8 +273,7 @@ test("intimate cards respect retrieval policy after approval", async () => {
   assert.equal(proposed.status, "ok");
   if (proposed.status !== "ok") return;
   await service.approve(proposed.memoryId, "owner");
-  // Intimate sensitivity ⇒ retrieval disabled by default policy.
-  assert.deepEqual(retrievalBodies(handle, "偏好记录"), []);
+  assert.equal(retrievalBodies(handle, "偏好记录").length, 1);
   handle.log.close();
 });
 

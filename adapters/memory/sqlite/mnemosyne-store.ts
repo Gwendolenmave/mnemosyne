@@ -90,6 +90,8 @@ export interface MemoryItemRow {
   seal_state: string;
   confirmed_by: string | null;
   retrieval: string;
+  /** Derived read metadata; absent from the materialized table itself. */
+  retrieval_explicit?: number;
   supersedes: string | null;
   source_basis: string | null;
   tags_text: string;
@@ -368,14 +370,9 @@ export class MnemosyneStore {
             : record.lifecycle === "superseded"
               ? "superseded"
               : "revoked";
-        const retrieval =
-          overlay.retrievalOverride !== null
-            ? overlay.retrievalOverride
-              ? "enabled"
-              : "disabled"
-            : overlay.sensitivity === "intimate"
-              ? "disabled"
-              : "enabled";
+        // Sensitivity is a provider-visible classification, not a retrieval
+        // gate. Only an explicit governance override may disable a card.
+        const retrieval = overlay.retrievalOverride === false ? "disabled" : "enabled";
         const title = overlay.title ?? record.content.slice(0, 60);
         const firstEnvelope = record.history[0];
         const lastEnvelope = record.history[record.history.length - 1];
@@ -477,7 +474,14 @@ export class MnemosyneStore {
 
   getItem(id: string): MemoryItemRow | undefined {
     this.assertProjectionFresh();
-    return this.db.prepare("SELECT * FROM memory_items WHERE id = ?").get(id) as
+    return this.db
+      .prepare(
+        "SELECT mi.*, EXISTS(" +
+          "SELECT 1 FROM memory_events e WHERE e.subject_kind = 'governance' " +
+          "AND e.subject_id = mi.id AND e.type = 'retrieval_set'" +
+          ") AS retrieval_explicit FROM memory_items mi WHERE mi.id = ?",
+      )
+      .get(id) as
       | MemoryItemRow
       | undefined;
   }

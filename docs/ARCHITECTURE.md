@@ -114,12 +114,14 @@ Conceptually:
 query + scene + retrieval intent
               │
               ▼
-        eligibility gates
-(authority / lifecycle / scope / AU-realm /
- sensitivity / conflict / expiry / permission)
+     hard eligibility gates
+(approval / lifecycle / expiry / retrieval permission /
+ session lifetime / injection safety / conflict handling)
               │
               ▼
         ranking + budget
+(scene / realm / AU / sensitivity remain model-visible context;
+ exact active-AU matches may receive a deterministic ranking boost)
               │
               ▼
        MemoryReadPacket
@@ -129,11 +131,12 @@ query + scene + retrieval intent
 
 Rules:
 
-1. **Eligibility precedes ranking.** A high similarity score cannot rescue an ineligible memory.
-2. Expired, revoked, superseded, retrieval-disabled, or scene-incompatible material must not leak through ordinary recall.
-3. AU/realm and relationship/project boundaries are authority/context boundaries, not ranking hints.
-4. Audit output must remain metadata-only and must not become a second durable memory body store.
-5. Recall must not mutate lifecycle state as a side effect.
+1. **Eligibility precedes ranking.** A high similarity score cannot rescue an actually ineligible memory.
+2. Unapproved, expired, revoked, superseded, explicitly retrieval-disabled, session-only, injection-unsafe, or unresolved same-realm conflict material must not enter ordinary ranking.
+3. **Scene, AU/realm, project/relationship scope labels, and sensitivity are context metadata, not implicit retrieval permissions.** They remain visible in the packet; an exact current-AU match may influence ranking, but a scene mismatch does not silently erase an otherwise governed active card.
+4. Reality and each explicit AU are distinct conflict domains. Same-title memories across different realms remain separately labelled rather than suppressing one another as a false conflict.
+5. Audit output must remain metadata-only and must not become a second durable memory body store.
+6. Recall must not mutate lifecycle state as a side effect.
 
 Primary implementation: `core/services/anamnesis.ts`.
 
@@ -310,7 +313,7 @@ Before finishing a structural change, answer all of these with evidence:
 - Can current projections/indexes still be rebuilt?
 - Did any transcript, episode summary, Muse trace, or model output gain durable authority implicitly?
 - Does recall still apply eligibility gates before ranking?
-- Are scope/AU/realm/sensitivity/lifecycle boundaries preserved?
+- Are scope/AU/realm/sensitivity labels preserved without silently becoming implicit retrieval permissions?
 - Is every durable write attributable to confirmation or registered policy authority?
 - Did a host-specific provider, account, machine path, surface, or credential leak into core domain state?
 - Are failure/refusal/success states still truthful and distinguishable?
