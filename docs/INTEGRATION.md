@@ -128,17 +128,32 @@ through the single Mnemosyne governance writer. `EPISODIC_ONLY` preserves
 historical/evidence value while removing the item from ordinary long-term
 retrieval; it is not physical deletion.
 
+A new `MERGE` must also prove that every retiring card and the survivor share
+one independently retrievable durable semantic center: `duplicate`,
+`paraphrase`, or `strict_subsumption`. Broad category/topic overlap is not merge
+authority. The proof is encoded in the append-only supersession reason so a
+projection rebuild cannot erase why the merge was admissible.
+
 ## Read path
 
 ```text
 scene + retrieval intent
-  -> principal / scope / AU / sensitivity gates
-  -> lifecycle / expiry / revocation / supersession gates
-  -> trust and conflict handling
+  -> approval / lifecycle / expiry / explicit retrieval-permission gates
+  -> session-lifetime and untrusted-body safety gates
+  -> realm-aware conflict handling
   -> ranking and item/token budgets
+       (scene / AU / realm / sensitivity remain visible context;
+        an exact active-AU match may receive a ranking boost)
   -> structured MemoryReadPacket
   -> containment-aware rendering by the host
 ```
+
+Scene, AU/realm, project/relationship scope labels, and sensitivity are not
+implicit retrieval permissions. Mnemosyne keeps them visible so the provider
+can interpret context without silently hiding otherwise governed active cards.
+If a deployment needs stricter access control, express it as explicit card
+retrieval governance or a separately reviewed host policy rather than assuming
+a classification label is itself an access-control decision.
 
 Do not concatenate raw memory rows into a system prompt. Use the packet and its
 rendering boundary so untrusted memory bodies cannot impersonate instructions.
@@ -184,8 +199,9 @@ any production swap. The host owns the atomic cutover and rollback boundary.
 - Never place runtime roots inside the source repository.
 - Treat backups and evidence archives as sensitive even when encrypted.
 - Keep audit bodies metadata-only.
-- Enforce principal, AU/realm, project, and sensitivity isolation in every
-  adapter, not only in the UI.
+- Preserve principal, AU/realm, project, and sensitivity labels through every
+  adapter. Do not turn those labels into accidental access-control rules; use
+  explicit retrieval governance or host policy when stricter isolation is required.
 - Review every new socket-opening dependency as an egress change.
 - Use synthetic fixtures for bug reports and compatibility tests.
 - Run the repository and history scanners before distributing a modified copy.
