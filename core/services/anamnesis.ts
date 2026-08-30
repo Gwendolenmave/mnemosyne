@@ -29,6 +29,8 @@ export interface MemoryItemView {
   seal_state: string;
   confirmed_by: string | null;
   retrieval: string;
+  /** 1 when an owner/governance event explicitly set retrieval on or off. */
+  retrieval_explicit?: number;
   supersedes: string | null;
   source_basis: string | null;
   tags_text: string;
@@ -65,11 +67,10 @@ export interface AnamnesisSource {
 }
 
 /**
- * Typed deterministic scene scope (M3a correction #2). Default mode is
- * "ordinary", which excludes every AU card; "au" requires its auId and
- * retrieves matching AU cards plus eligible global cards. Until the
- * SessionStateStore exists the runtime always passes ordinary — this type
- * is the clean future connection point.
+ * Typed deterministic scene scope. The scene is advisory retrieval context:
+ * exact AU matches may rank higher, but no AU or sensitivity label acts as a
+ * hard visibility partition. AU identity is rendered explicitly for the
+ * provider to interpret.
  */
 export type MemorySceneScope =
   | { mode: "ordinary"; intimacyActive: boolean }
@@ -169,7 +170,7 @@ export function trustRank(item: MemoryItemView): number {
 /** MemoryPolicy: one item's retrieval eligibility under the active scene. */
 export function isEligible(
   item: MemoryItemView,
-  scene: MemorySceneScope,
+  _scene: MemorySceneScope,
   nowIso: string,
 ): EligibilityVerdict {
   if (item.approval_state !== "confirmed" && item.approval_state !== "policy_activated") {
@@ -188,24 +189,16 @@ export function isEligible(
   if (item.expires_at !== null && item.expires_at <= nowIso) {
     return { ok: false, reason: "expired (past valid-until)" };
   }
-  if (item.retrieval !== "enabled") {
-    // An active card with retrieval turned off = governed off (e.g. a stale
-    // fact retired via governance) or an intimate-sensitivity default.
-    return {
-      ok: false,
-      reason:
-        item.sensitivity === "intimate"
-          ? "retrieval disabled (intimate sensitivity default)"
-          : "retrieval disabled (governance/superseded)",
-    };
-  }
-  if (item.sensitivity === "intimate" && !scene.intimacyActive) {
-    return { ok: false, reason: "intimate memory outside intimate context" };
-  }
-  if (item.scope === "au") {
-    if (scene.mode !== "au" || item.au_id !== scene.auId) {
-      return { ok: false, reason: "AU isolation" };
-    }
+  // Sensitivity is descriptive, not a scene hard gate. Historical projections
+  // defaulted intimate cards to disabled; that legacy default must not hide an
+  // approved, active card. An explicit retrieval_set(false) still wins for
+  // every sensitivity class.
+  const disabledOnlyByLegacyIntimateDefault =
+    item.retrieval !== "enabled" &&
+    item.sensitivity === "intimate" &&
+    item.retrieval_explicit !== 1;
+  if (item.retrieval !== "enabled" && !disabledOnlyByLegacyIntimateDefault) {
+    return { ok: false, reason: "retrieval disabled by card governance" };
   }
   if (item.scope === "session") {
     return { ok: false, reason: "session-scoped (not retrievable)" };
@@ -220,15 +213,17 @@ export function isEligible(
 /**
  * MemoryPolicy: conflicting eligible items (same normalized title) are
  * resolved by TRUST PRECEDENCE first (D0 §5.4): a uniquely highest-trust
- * card wins and lower-trust cards are excluded as outranked. Cards tied
- * at the highest trust level are a true conflict — never silently
- * resolved; all tied parties are excluded as review candidates (M1.1
- * section G case 2).
+ * card wins and lower-trust cards are excluded as outranked. Reality and
+ * each explicit AU are distinct semantic realms, so the same title across
+ * realms remains model-visible with an AU label rather than forming a false
+ * conflict. Cards tied inside one realm at the highest trust level are a
+ * true conflict and remain excluded for review.
  */
 export function detectConflicts(items: readonly MemoryItemView[]): Map<string, string> {
   const byTitle = new Map<string, MemoryItemView[]>();
   for (const item of items) {
-    const key = item.title.trim().toLowerCase();
+    const realm = item.scope === "au" ? `au:${item.au_id ?? "unknown"}` : "reality";
+    const key = `${realm}\u0000${item.title.trim().toLowerCase()}`;
     const group = byTitle.get(key) ?? [];
     group.push(item);
     byTitle.set(key, group);
@@ -268,6 +263,7 @@ export interface RankedMemory {
  *   +2.0   every query token present in the title
  *   +1.5   any query token equals a tag
  *   +0.5 × importance
+ *   +1.0   exact current-AU match (advisory ranking only)
  * Ties break by item id for determinism.
  */
 export function retrieve(
@@ -319,6 +315,10 @@ export function retrieve(
         why.push("tag match");
       }
       score += 0.5 * item.importance;
+      if (scene.mode === "au" && item.scope === "au" && item.au_id === scene.auId) {
+        score += 1.0;
+        why.push("active AU match");
+      }
       // D0 §5.4 precedence: individually confirmed evidence outranks
       // policy-activated; explicit outranks observed. Deterministic term.
       score += 0.5 * trustRank(item);
@@ -339,6 +339,10 @@ export interface MemoryReadPacket {
     title: string;
     body: string;
     scope: string;
+    /** Present on AU cards so provider-visible titles can carry the realm. */
+    auId?: string | null;
+    /** Classification label only; never a retrieval hard gate. */
+    sensitivity?: string;
     confidence: string;
     sourcePointer: string | null;
   }>;
@@ -433,6 +437,8 @@ export function buildMemoryReadPacket(input: {
       title: entry.item.title,
       body: entry.item.body,
       scope: entry.item.scope,
+      auId: entry.item.au_id,
+      sensitivity: entry.item.sensitivity,
       // Visible trust distinction (D0 §5.4): policy-activated cards are
       // labeled auto:<basis>; individually confirmed keep the plain basis.
       confidence:
@@ -491,10 +497,12 @@ export function renderMemoryPacket(packet: MemoryReadPacket): string {
     packet.memories.length === 0
       ? "(no relevant remembered cards; do not invent any)"
       : packet.memories
-          .map(
-            (memory) =>
-              `[${memory.id.slice(0, 8)}|${memory.scope}|${memory.confidence}] ${JSON.stringify(memory.body)}`,
-          )
+          .map((memory) => {
+            const title = memory.scope === "au"
+              ? `[AU:${memory.auId ?? "unknown"}] ${memory.title}`
+              : memory.title;
+            return `[${memory.id.slice(0, 8)}|${memory.scope}|${memory.sensitivity ?? "unclassified"}|${memory.confidence}] title=${JSON.stringify(title)} body=${JSON.stringify(memory.body)}`;
+          })
           .join("\n"),
   );
   parts.push("=== END MEMORY ===");
