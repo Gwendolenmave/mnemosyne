@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { MemoryEventEnvelope } from "../domain/memory.js";
 import type { MnemosyneEnvelope } from "../domain/mnemosyne.js";
+import {
+  parseDurableSemanticCenterMergeReason,
+  type DurableSemanticCenterMergeRelation,
+} from "../policies/durable-semantic-center.js";
 
 /**
  * Pure planning contract for append-only policy-card consolidation.
@@ -33,6 +37,8 @@ export interface PolicyConsolidationPlan {
   readonly governance: readonly MnemosyneEnvelope[];
   readonly sourceMemoryIds: readonly string[];
   readonly survivorMemoryId: string;
+  /** Present only for MERGE; persisted again inside each supersession reason. */
+  readonly mergeSemanticRelation?: DurableSemanticCenterMergeRelation;
 }
 
 export type PolicyConsolidationOutcome =
@@ -210,10 +216,13 @@ export function planPolicyActivatedSupersede(input: {
 }
 
 /**
- * Plan N→1 duplicate consolidation. Each source is retired with an independent
- * memory_superseded event while the survivor remains untouched. Sources already
- * superseded to the same survivor are skipped for crash/retry idempotence;
- * conflicting terminal history refuses the whole plan.
+ * Plan N→1 consolidation ONLY for records proven to share one durable semantic
+ * center. Merely sharing a broad topic/category is never merge authority.
+ *
+ * New semantic mutation requires a typed proof encoded in the persisted reason:
+ * duplicate, paraphrase, or strict subsumption. A fully completed historical
+ * merge remains exact-target idempotent even if it predates this proof format;
+ * that compatibility path performs zero writes and cannot broaden old history.
  */
 export function planPolicyActivatedMerge(input: {
   readonly sources: readonly PolicyConsolidationCard[];
@@ -275,6 +284,20 @@ export function planPolicyActivatedMerge(input: {
     return { status: "already", detail: "all merge sources already point to this exact survivor" };
   }
 
+  const semanticProof = parseDurableSemanticCenterMergeReason(reason);
+  if (semanticProof === null) {
+    return {
+      status: "refused",
+      issues: [
+        {
+          path: "mergeSemanticRelation",
+          message:
+            "MERGE requires typed same-semantic-center proof (duplicate|paraphrase|strict_subsumption); category/topic overlap is not sufficient",
+        },
+      ],
+    };
+  }
+
   const nowIso = (input.now ?? new Date()).toISOString();
   const kernel: MemoryEventEnvelope[] = [];
   const governance: MnemosyneEnvelope[] = [];
@@ -296,6 +319,7 @@ export function planPolicyActivatedMerge(input: {
       governance,
       sourceMemoryIds: activeSources.map((card) => card.id),
       survivorMemoryId: input.survivor.id,
+      mergeSemanticRelation: semanticProof.relation,
     },
   };
 }
