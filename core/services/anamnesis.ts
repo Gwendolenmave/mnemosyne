@@ -15,6 +15,11 @@
  */
 
 import { segmentForSearch } from "./segmentation.js";
+import {
+  admitLexical,
+  DEFAULT_ANAMNESIS_LEXICAL_ADMISSION_PROFILE,
+  type AnamnesisLexicalAdmissionProfileV1,
+} from "./anamnesis-admission.js";
 
 export interface MemoryItemView {
   id: string;
@@ -257,7 +262,10 @@ export interface RankedMemory {
 }
 
 /**
- * MemoryRetriever: FTS candidates + a short, configuration-free reranker.
+ * MemoryRetriever: FTS candidates + H8 relevance admission + a short,
+ * configuration-free reranker. Admission happens before any boost, so trust,
+ * importance, title/tag, or AU advice cannot rescue a weak lexical hit.
+ *
  * Scoring terms (documented, deterministic):
  *   base   = -bm25 rank (lower bm25 = better lexical match)
  *   +2.0   every query token present in the title
@@ -272,6 +280,7 @@ export function retrieve(
   scene: MemorySceneScope,
   nowIso: string,
   wantItems: number,
+  admissionProfile: AnamnesisLexicalAdmissionProfileV1 = DEFAULT_ANAMNESIS_LEXICAL_ADMISSION_PROFILE,
 ): { ranked: RankedMemory[]; excluded: Array<{ id: string; reason: string }> } {
   const hits = source.ftsSearch(query, Math.max(wantItems * 4, 12));
   const excluded: Array<{ id: string; reason: string }> = [];
@@ -284,6 +293,11 @@ export function retrieve(
     const verdict = isEligible(item, scene, nowIso);
     if (!verdict.ok) {
       excluded.push({ id: item.id, reason: verdict.reason });
+      continue;
+    }
+    const relevance = admitLexical(query, item, admissionProfile);
+    if (!relevance.admitted) {
+      excluded.push({ id: item.id, reason: `admission: ${relevance.reason}` });
       continue;
     }
     eligible.push({ item, rank: hit.rank });
@@ -406,8 +420,9 @@ export function buildMemoryReadPacket(input: {
     fragments.push({ id: fragment.id, body: fragment.body });
   }
 
-  // Steps 4-8: retrieved memories — policy-filtered, conflict-checked,
-  // deduped against priors.
+  // Steps 4-8: retrieved memories — policy-filtered, relevance-admitted,
+  // conflict-checked, deduped against priors. memoriesItems is a maximum,
+  // never a quota: H8 may honestly return fewer or zero cards.
   const { ranked, excluded: retrievalExcluded } = retrieve(
     input.source,
     input.query,
