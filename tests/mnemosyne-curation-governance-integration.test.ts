@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { openMnemosyne } from "../adapters/memory/sqlite/mnemosyne-facade.js";
 import type { MemoryCreationEvidence } from "../core/domain/memory.js";
 import { asManualEntryId } from "../core/domain/ids.js";
+import { encodeDurableSemanticCenterMergeReason } from "../core/policies/durable-semantic-center.js";
 import {
   curationRevisionPreconditionDigest,
   type CurationWritePlan,
@@ -100,7 +101,13 @@ function plan(
         replacement_importance: null,
         supersedes_card_ids: [],
         merge_card_ids: [],
-        reason: `Synthetic ${action.toLowerCase()} curation decision.`,
+        reason:
+          action === "MERGE"
+            ? encodeDurableSemanticCenterMergeReason(
+                "duplicate",
+                "synthetic merge participants are duplicate statements of one durable fact",
+              )
+            : `Synthetic ${action.toLowerCase()} curation decision.`,
         reviewer: n % 2 === 0 ? "owner" : "companion",
         reviewed_at: "2026-08-26T03:00:00.000Z",
         ...patch,
