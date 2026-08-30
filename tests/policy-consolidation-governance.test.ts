@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { test } from "node:test";
 import type { MemoryEventEnvelope } from "../core/domain/memory.js";
 import type { MnemosyneEnvelope, OwnerPolicyCurrent } from "../core/domain/mnemosyne.js";
+import { encodeDurableSemanticCenterMergeReason } from "../core/policies/durable-semantic-center.js";
 import {
   MnemosyneGovernanceService,
   type GovernanceItemView,
@@ -163,7 +164,7 @@ test("supersede consolidation commits planner events through the single governan
   assert.deepEqual(backups, ["supersede_policy_activated"]);
 });
 
-test("merge consolidation is one joint governed append and exact replay is zero-write", async () => {
+test("merge consolidation requires semantic-center proof, then commits once with exact replay zero-write", async () => {
   const store = new SyntheticGovernanceStore();
   const sourceA = card();
   const sourceB = card(randomUUID(), { source_basis: "observed", provenance: JSON.stringify({ source_basis: "observed" }) });
@@ -176,11 +177,30 @@ test("merge consolidation is one joint governed append and exact replay is zero-
   const audit: Record<string, unknown>[] = [];
   const governance = service(store, backups, audit);
 
+  const refused = await governance.mergePolicyActivated(
+    [sourceA.id, sourceB.id],
+    survivor.id,
+    "companion",
+    "Synthetic records share a broad preference category.",
+  );
+  assert.equal(refused.status, "refused");
+  if (refused.status === "refused") {
+    assert.equal(refused.issues.some((issue) => issue.path === "mergeSemanticRelation"), true);
+  }
+  assert.equal(store.batches.length, 0);
+  assert.equal(store.rebuildCount, 0);
+  assert.equal(backups.length, 0);
+  assert.equal(audit.length, 0);
+
+  const reason = encodeDurableSemanticCenterMergeReason(
+    "duplicate",
+    "synthetic records are duplicate statements of one durable memory",
+  );
   const first = await governance.mergePolicyActivated(
     [sourceA.id, sourceB.id],
     survivor.id,
     "companion",
-    "Synthetic records were reviewed as one durable memory.",
+    reason,
   );
   assert.equal(first.status, "ok");
   assert.equal(store.batches.length, 1);
@@ -196,7 +216,7 @@ test("merge consolidation is one joint governed append and exact replay is zero-
     [sourceA.id, sourceB.id],
     survivor.id,
     "companion",
-    "Exact replay must remain append-only.",
+    reason,
   );
   assert.equal(replay.status, "already");
   assert.equal(store.batches.length, 1);

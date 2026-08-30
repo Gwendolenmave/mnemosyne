@@ -1,5 +1,6 @@
 import type { MemoryCreationEvidence } from "../domain/memory.js";
 import { deriveProvenanceAxes } from "../domain/mnemosyne.js";
+import { parseDurableSemanticCenterMergeReason } from "../policies/durable-semantic-center.js";
 import { parseProvenance, type GovernanceItemView } from "./mnemosyne-governance.js";
 import { policyRevisionPreconditionDigest } from "./policy-revision-idempotence.js";
 import {
@@ -331,7 +332,8 @@ function batchReceiptMatches(
  * Whole-set application preflight. With no receipt reader this remains the
  * existing pure state planner. When durable receipts are supplied, exact
  * replay is resolved from immutable identities before consulting post-write
- * projection state, while conflicting reuse fails closed.
+ * projection state. New MERGE work must also carry a typed semantic-center
+ * proof before any decision in the set is allowed to write.
  */
 export function preflightCurationApplication(
   bundle: CurationDecisionSetBundle,
@@ -423,6 +425,13 @@ export function preflightCurationApplication(
           message: "RECLASSIFY_AU requires an exact canonical AU slug",
         });
       }
+    }
+    if (action === "MERGE" && parseDurableSemanticCenterMergeReason(decision.row.reason) === null) {
+      issues.push({
+        path: `decisions.${decision.row.card_id}.mergeSemanticRelation`,
+        message:
+          "MERGE requires typed same-semantic-center proof before any batch write; category/topic overlap is not sufficient",
+      });
     }
     if (action === "SUPERSEDE" || action === "MERGE") {
       validateConsolidationState(decision, reader, issues);
