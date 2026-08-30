@@ -15,7 +15,9 @@ import type { MemoryItemView } from "../core/services/anamnesis.js";
 function card(id: string, rankText: string): MemoryItemView {
   return {
     id,
-    title: "lumbar pillow support",
+    // Distinct titles keep this fixture focused on the facade limit contract;
+    // equal-trust same-title cards correctly form a separate conflict case.
+    title: `lumbar pillow support ${rankText}`,
     body: `synthetic memory ${rankText}: lumbar pillow support for back discomfort`,
     scope: "project",
     au_id: null,
