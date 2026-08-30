@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { MemoryCreationEvidence } from "../core/domain/memory.js";
 import { asConversationId, asMessageId, asModelFamilyId, asTurnId } from "../core/domain/ids.js";
+import { encodeDurableSemanticCenterMergeReason } from "../core/policies/durable-semantic-center.js";
 import {
   curationItemPreconditionDigest,
   curationRevisionPreconditionDigest,
@@ -79,6 +80,13 @@ function consolidationRow(
 ): Record<string, unknown> {
   return {
     ...row(action, cardId),
+    reason:
+      action === "MERGE"
+        ? encodeDurableSemanticCenterMergeReason(
+            "duplicate",
+            "synthetic merge participants are duplicate statements of one durable fact",
+          )
+        : `synthetic ${action}`,
     consolidation: {
       source_card_ids: [...sources],
       survivor_card_id: survivor,
@@ -164,6 +172,21 @@ test("whole-set state preflight fails closed on frozen evidence/projection basis
   assert.equal(result.ok, false);
   if (!result.ok) {
     assert.ok(result.issues.some((issue) => issue.message.includes("conflicts with projected source basis")));
+  }
+});
+
+test("whole-set preflight rejects category-only MERGE before returning any write plan", () => {
+  const merge = {
+    ...consolidationRow("MERGE", "card-merge-source", ["card-merge-source"], "card-merge-survivor"),
+    reason: "both cards belong to the same media category",
+  };
+  const input = bundle([row("KEEP", "card-good"), merge]);
+  const reader = { getItem: (id: string) => item(id) };
+
+  const result = preflightCurationApplication(input, reader);
+  assert.equal(result.ok, false);
+  if (!result.ok) {
+    assert.ok(result.issues.some((issue) => issue.path.endsWith("mergeSemanticRelation")));
   }
 });
 
