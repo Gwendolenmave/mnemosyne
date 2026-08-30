@@ -32,13 +32,15 @@ A few weeks later, Atalanta says:
 
 This is extremely similar to the original seat preference, but its lifetime is different. It may remain episodic / short-lived evidence without overwriting the durable default merely because an embedding considers the two sentences close.
 
-### 3. A fictional-world fact does not leak into an ordinary scene
+### 3. A fictional-world fact stays visibly in its own realm
 
 That evening she enters an AU called **Nocturne**:
 
 > “In this world, Atalanta never sits by the window.”
 
-This evidence belongs to another realm. Even though it contains the same entities and concepts — Atalanta, seats, windows — it is not an ordinary-scene fact. AU / realm separation is an eligibility boundary, not a small ranking weight that a large similarity score can overpower.
+This evidence belongs to another realm. If it is admitted as durable memory, Mnemosyne keeps that realm identity explicit instead of pretending it is an ordinary-world fact. An AU card may still be model-visible outside the active AU; it carries an explicit `[AU:…]` label, and an exact active-AU match is only an advisory ranking signal. Realm and sensitivity metadata do not silently grant or revoke retrieval permission.
+
+That distinction matters when two memories use the same entities and even the same title. Reality and each AU remain separate conflict domains, so an AU fact does not suppress a reality fact merely because their wording overlaps.
 
 ### 4. A real long-term change updates current truth without erasing history
 
@@ -56,16 +58,16 @@ The next week, in an ordinary scene, Artemis receives a request:
 
 > “Which seat should I choose for Atalanta’s next train?”
 
-Anamnesis removes ineligible material before ranking:
+Anamnesis removes genuinely ineligible material before ranking:
 
 - the old “default to window” preference has been superseded;
-- the one-trip aisle choice was a short-lived / episodic exception;
-- the Nocturne fact belongs to another scene;
-- only memory that is current, authorized, scope-compatible, unexpired, and retrieval-enabled reaches ranking and budget selection.
+- the one-trip aisle choice was a short-lived / episodic exception rather than a durable default;
+- a card explicitly disabled for retrieval, revoked, expired, unapproved, or otherwise lifecycle-ineligible does not enter ranking;
+- a Nocturne memory may remain visible, but it stays explicitly labelled as AU context rather than masquerading as reality.
 
-The result is the current ordinary-scene preference: “default to aisle.” **Even if an older sentence is semantically closer to the query, an ineligible memory never gets a chance to win the ranking stage.**
+The current reality preference is therefore “default to aisle”; if a relevant Nocturne card is also present in the packet, Artemis can see exactly which worldline it belongs to. **A high similarity score still cannot rescue an actually ineligible memory, while scene/realm/sensitivity metadata remain context instead of accidental access-control switches.**
 
-That is the central difference between Mnemosyne and “put the chat log in a vector database.” Mnemosyne is not trying to preserve as much of the past as possible. It maintains **memory state that can change, be audited, and leave the current context without falsifying history**.
+That is the central difference between Mnemosyne and “put the chat log in a vector database.” Mnemosyne is not trying to preserve as much of the past as possible. It maintains **memory state that can change, be audited, and carry explicit context without falsifying history**.
 
 ## The actual path from conversation to recall
 
@@ -97,12 +99,14 @@ scene + query + retrieval intent
              Anamnesis
                  │
                  ▼
- eligibility gates
- authority / lifecycle / scope / realm /
- sensitivity / expiry / permission / conflict
+ hard eligibility gates
+ approval / lifecycle / expiry / retrieval permission /
+ session lifetime / injection safety / conflict handling
                  │
                  ▼
           ranking + budget
+   (realm / AU / sensitivity remain labelled;
+    exact active-AU match may affect ranking)
                  │
                  ▼
           MemoryReadPacket
