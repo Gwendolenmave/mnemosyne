@@ -249,7 +249,7 @@ test("T05D-L9: declined and quarantined never become retrievable memory", () => 
     "explicit outranks observed within policy activation");
 });
 
-test("T05D-L10: the eligibility gates fail closed on AU, sensitivity, expiry and lifecycle", () => {
+test("T05D-L10: governance gates fail closed while AU and sensitivity stay descriptive", () => {
   const base: MemoryItemView = {
     id: "m-1", title: "synthetic", body: "synthetic body", scope: "relationship",
     au_id: null, sensitivity: "normal", importance: 2, approval_state: "policy_activated",
@@ -265,8 +265,6 @@ test("T05D-L10: the eligibility gates fail closed on AU, sensitivity, expiry and
     ["superseded", { lifecycle_state: "superseded" }, /superseded/],
     ["revoked", { lifecycle_state: "revoked" }, /lifecycle revoked/],
     ["retrieval off", { retrieval: "disabled" }, /retrieval disabled/],
-    ["intimate outside intimacy", { sensitivity: "intimate" }, /intimate|retrieval disabled/],
-    ["AU card in an ordinary scene", { scope: "au", au_id: "au-x" }, /AU isolation/],
     ["session scoped", { scope: "session" }, /session-scoped/],
   ];
   for (const [label, over, reason] of cases) {
@@ -274,7 +272,10 @@ test("T05D-L10: the eligibility gates fail closed on AU, sensitivity, expiry and
     assert.equal(v.ok, false, `${label} must be refused`);
     assert.match(v.reason, reason, `${label}: ${v.reason}`);
   }
-  // And the positive control, so the gate is not simply refusing everything.
+  // Classification and worldline metadata are model-visible context, not hard
+  // retrieval gates. The active scene only influences ranking.
+  assert.equal(isEligible({ ...base, sensitivity: "intimate", retrieval: "disabled" }, ordinary, now).ok, true);
+  assert.equal(isEligible({ ...base, scope: "au", au_id: "au-x" }, ordinary, now).ok, true);
   assert.equal(isEligible(base, ordinary, now).ok, true);
 });
 
