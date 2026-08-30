@@ -228,13 +228,18 @@ export function buildMemoryPacketBlock(packet: MemoryReadPacket): string {
     packet.memories.length === 0
       ? "(no relevant confirmed memories; do not invent any)"
       : packet.memories
-          .map(
-            (memory) =>
-              // JSON-serialized: bodies are quoted untrusted data. Newlines
-              // and reserved delimiter syntax can never start a line, so
-              // retrieved data cannot open or close a prompt section.
-              `[${memory.id.slice(0, 8)}|${memory.scope}|${memory.confidence}] ${JSON.stringify(memory.body)}`,
-          )
+          .map((memory) => {
+            const title = memory.scope === "au"
+              ? `[AU:${memory.auId ?? "unknown"}] ${memory.title}`
+              : memory.title;
+            return (
+              // JSON-serialized: titles and bodies are quoted untrusted data.
+              // Newlines and reserved delimiter syntax can never start a line
+              // or open/close a prompt section.
+              `[${memory.id.slice(0, 8)}|${memory.scope}|${memory.sensitivity ?? "unclassified"}|${memory.confidence}] ` +
+              `title=${JSON.stringify(title)} body=${JSON.stringify(memory.body)}`
+            );
+          })
           .join("\n"),
   );
   lines.push("=== END LONG-TERM MEMORY ===");
