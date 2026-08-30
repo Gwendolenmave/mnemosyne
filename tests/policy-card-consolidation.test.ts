@@ -5,6 +5,7 @@ import { foldMemoryEvents } from "../core/domain/memory-fold.js";
 import type { MemoryEventEnvelope } from "../core/domain/memory.js";
 import { asManualEntryId, asMemoryEventId, asMemoryId } from "../core/domain/ids.js";
 import { validateMnemosyneStream } from "../core/domain/mnemosyne.js";
+import { encodeDurableSemanticCenterMergeReason } from "../core/policies/durable-semantic-center.js";
 import {
   planPolicyActivatedMerge,
   planPolicyActivatedSupersede,
@@ -56,6 +57,10 @@ function supersededEvent(source: string, survivor: string): MemoryEventEnvelope 
       reason: "synthetic prior merge",
     },
   };
+}
+
+function mergeReason(rationale: string): string {
+  return encodeDurableSemanticCenterMergeReason("duplicate", rationale);
 }
 
 test("policy-card supersede is append-only, exact-target idempotent, and survivor-safe", () => {
@@ -132,6 +137,46 @@ test("policy-card supersede is append-only, exact-target idempotent, and survivo
   assert.equal(candidateTarget.status, "refused");
 });
 
+test("policy-card merge requires one durable semantic center and rejects category-only consolidation", () => {
+  const survivor = card();
+  const sourceA = card();
+  const sourceB = card(randomUUID(), { sourceBasis: "observed" });
+
+  const categoryOnly = planPolicyActivatedMerge({
+    sources: [sourceA, sourceB],
+    survivor,
+    by: "owner",
+    reason: "all three cards are media preferences so they should share one card",
+  });
+  assert.equal(categoryOnly.status, "refused");
+  if (categoryOnly.status === "refused") {
+    assert.equal(categoryOnly.issues.some((issue) => issue.path === "mergeSemanticRelation"), true);
+  }
+
+  const typed = planPolicyActivatedMerge({
+    sources: [sourceA, sourceB],
+    survivor,
+    by: "owner",
+    reason: encodeDurableSemanticCenterMergeReason(
+      "strict_subsumption",
+      "survivor contains the same durable fact without absorbing an independent preference",
+    ),
+  });
+  assert.equal(typed.status, "planned");
+  if (typed.status === "planned") {
+    assert.equal(typed.plan.mergeSemanticRelation, "strict_subsumption");
+    assert.equal(
+      typed.plan.kernel.every(
+        (event) =>
+          event.event.type === "memory_superseded" &&
+          typeof event.event.reason === "string" &&
+          event.event.reason.startsWith("[semantic-center:strict_subsumption]"),
+      ),
+      true,
+    );
+  }
+});
+
 test("policy-card merge plans only unfinished N-to-1 sources and fails closed on conflicts", () => {
   const survivor = card();
   const sourceA = card();
@@ -145,12 +190,13 @@ test("policy-card merge plans only unfinished N-to-1 sources and fails closed on
     sources: [sourceA, sourceB, sourceAlready],
     survivor,
     by: "companion",
-    reason: "three synthetic records represent one reviewed durable memory",
+    reason: mergeReason("three synthetic records are duplicate statements of one durable memory"),
     now: new Date("2026-08-26T00:00:00.000Z"),
   });
   assert.equal(outcome.status, "planned");
   if (outcome.status !== "planned") return;
   assert.deepEqual(outcome.plan.sourceMemoryIds, [sourceA.id, sourceB.id]);
+  assert.equal(outcome.plan.mergeSemanticRelation, "duplicate");
   assert.equal(outcome.plan.kernel.length, 2);
   assert.equal(outcome.plan.governance.length, 2);
   assert.equal(outcome.plan.governance.every((event) => event.actor === "companion"), true);
@@ -182,7 +228,7 @@ test("policy-card merge plans only unfinished N-to-1 sources and fails closed on
     ],
     survivor,
     by: "owner",
-    reason: "same completed merge",
+    reason: "legacy pre-policy completed merge retry",
   });
   assert.equal(completeRetry.status, "already");
 
@@ -194,7 +240,7 @@ test("policy-card merge plans only unfinished N-to-1 sources and fails closed on
     ],
     survivor,
     by: "owner",
-    reason: "conflicting historical target must stop the whole batch",
+    reason: mergeReason("conflicting historical target must stop the duplicate merge"),
   });
   assert.equal(conflict.status, "refused");
 
@@ -202,7 +248,7 @@ test("policy-card merge plans only unfinished N-to-1 sources and fails closed on
     sources: [sourceA, sourceA],
     survivor,
     by: "owner",
-    reason: "duplicate source ids are not a valid merge set",
+    reason: mergeReason("duplicate source ids are not a valid duplicate merge set"),
   });
   assert.equal(duplicateInput.status, "refused");
 });
