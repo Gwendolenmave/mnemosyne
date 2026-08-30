@@ -32,13 +32,15 @@ Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍�
 
 这条信息和“座位偏好”非常相似，但它的寿命不同。它可以被保留为 episodic / short-lived evidence，却不应该因为 embedding 很像，就把“默认靠窗”覆盖掉。
 
-### 3. 虚构世界里的事实也不会漏回现实场景
+### 3. 虚构世界里的事实会一直带着自己的 realm 标签
 
 晚上她进入一个叫 **Nocturne** 的 AU：
 
 > “这个世界里的 Atalanta 从来不坐窗边。”
 
-这条 evidence 属于另一个 realm。即使文本里同样出现了 “Atalanta”“座位”“窗边”，它也不是 ordinary scene 的候选事实。AU / realm 边界是 eligibility boundary，不是一个可以被高 similarity score 冲掉的小权重。
+这条 evidence 属于另一个 realm。如果它后来被治理为 durable memory，Mnemosyne 会继续明确保留这个 realm，而不是把它伪装成现实世界事实。AU card 在当前不是这个 AU 时也可以对模型可见，但会显式带着 `[AU:…]` 标签；当前 AU 的精确匹配只是一条 ranking 建议。Realm 和 sensitivity 本身不会偷偷变成“允许 / 禁止召回”的开关。
+
+这点在两条记忆用了同一个实体、甚至同一个标题时尤其重要：现实与每个 AU 是不同的 conflict domain，因此 AU 里的事实不会仅仅因为措辞相似就压掉现实里的事实。
 
 ### 4. 真正的长期变化会更新 current truth，但不抹掉历史
 
@@ -50,22 +52,22 @@ Retention 可以把它识别为值得长期考虑的稳定偏好；随后它仍�
 
 旧事实没有被假装成“从未发生”。它仍然留在 append-only event history 里，连同 provenance、authority 和 lifecycle 变化一起可追溯；当前 view 只是由这些事件折叠出来的 projection。
 
-### 5. 真正召回时，先判断“能不能出现”，再判断“像不像”
+### 5. 真正召回时，先判断“有没有资格”，再判断“像不像”
 
 下一周，在 ordinary scene 里，Artemis 收到一个请求：
 
 > “给 Atalanta 订下一趟火车，座位选哪边？”
 
-Anamnesis 会先把不合格的东西挡在 ranking 之前：
+Anamnesis 会先把真正不合格的东西挡在 ranking 之前：
 
 - 旧的“默认靠窗”已经被 supersede；
-- “这趟临时坐过道”只是短期 / episodic exception；
-- Nocturne AU 的事实不属于当前 scene；
-- 只有当前、获准、scope 匹配、未过期、允许 retrieval 的 memory 才进入后续 ranking 和 budget。
+- “这趟临时坐过道”只是短期 / episodic exception，而不是 durable default；
+- 被显式 retrieval-off、revoked、expired、未获批准或 lifecycle 不合格的 memory 不会进入 ranking；
+- Nocturne memory 可以继续出现，但会明确标成 AU context，而不是冒充现实事实。
 
-最后返回的是当前普通场景有资格使用的“默认坐过道”。**哪怕某条旧句子在语义上更像当前 query，它只要不合格，就连参加排名的资格都没有。**
+所以现实里的当前偏好仍然是“默认坐过道”；如果相关的 Nocturne card 也进入 packet，Artemis 也能一眼知道它属于哪条 worldline。**更高的 similarity 仍然救不了真正不合格的 memory；但 scene / realm / sensitivity 是上下文，而不是无意间变成的访问控制。**
 
-这就是 Mnemosyne 和“把聊天记录塞进向量库”最根本的差别：它不是尽量多地保存过去，而是维护一套**可以变化、可以追责、可以退出当前语境的记忆状态**。
+这就是 Mnemosyne 和“把聊天记录塞进向量库”最根本的差别：它不是尽量多地保存过去，而是维护一套**可以变化、可以追责、又能明确携带上下文而不伪造历史的记忆状态**。
 
 ## 从对话到回忆，真正的数据流
 
@@ -97,12 +99,14 @@ scene + query + retrieval intent
              Anamnesis
                  │
                  ▼
- eligibility gates
- authority / lifecycle / scope / realm /
- sensitivity / expiry / permission / conflict
+ hard eligibility gates
+ approval / lifecycle / expiry / retrieval permission /
+ session lifetime / injection safety / conflict handling
                  │
                  ▼
           ranking + budget
+（realm / AU / sensitivity 继续带标签；
+ 当前 AU 精确匹配可以影响 ranking）
                  │
                  ▼
           MemoryReadPacket
