@@ -1,28 +1,35 @@
 /**
- * Mnemosyne runtime surface for M2-4: a compatibility facade that serves
- * the EXISTING MemoryStore port (read-only authority surface), plus the
- * preflight probe. Opening Mnemosyne may deterministically rebuild disposable
- * projections from the append-only event truth; it never creates memory
- * authority by doing so.
+ * Mnemosyne runtime surface: a compatibility facade that serves the existing
+ * MemoryStore port, plus explicit open/create and read-only preflight paths.
+ * Opening Mnemosyne may deterministically rebuild disposable projections from
+ * append-only event truth; the preflight path never opens that mutable facade.
  *
- * The facade renders the structured Memory Read Packet for the legacy
- * opaque-text channel; the structured injection itself (ContextInput
- * extension) is M3 and is deliberately NOT wired here. The facade always
- * runs with a conservative scene (no AU, no intimacy), so AU-scoped and
- * intimate memories can never leak through the legacy channel.
+ * The facade renders the structured Memory Read Packet for the legacy opaque-
+ * text channel. It supplies an ordinary scene because this legacy interface has
+ * no scene input; realm/AU/sensitivity remain model-visible context and are not
+ * implicit access-control gates. Explicit retrieval governance still applies.
  */
 
 import type { MemoryProbe, MemoryRetrieval, MemoryStore } from "../../../core/ports/memory-store.js";
 import {
   buildMemoryReadPacket,
+  DEFAULT_BUDGETS,
   renderMemoryPacket,
   type MemorySceneScope,
 } from "../../../core/services/anamnesis.js";
 import { sha256Hex } from "../../../core/services/prompt-loader.js";
 import { MnemosyneStore } from "./mnemosyne-store.js";
+import { inspectMnemosyneReadOnly } from "./read-only-mnemosyne-inspector.js";
 import { SqliteMemoryEventLog } from "./sqlite-memory-event-log.js";
 
+export { inspectMnemosyneReadOnly };
+
 const CONSERVATIVE_SCENE: MemorySceneScope = { mode: "ordinary", intimacyActive: false };
+
+function boundedFacadeMemoryItems(limit: number): number {
+  if (!Number.isFinite(limit) || limit <= 0) return 0;
+  return Math.min(DEFAULT_BUDGETS.memoriesItems, Math.floor(limit));
+}
 
 /**
  * Runtime projection reads must not allow another connection to commit newer
@@ -40,9 +47,7 @@ class ProjectionLockedMnemosyneStore extends MnemosyneStore {
 
   private withProjectionReadLock<T>(read: () => T): T {
     const db = this.eventLog.db;
-    if (db.isTransaction) {
-      return read();
-    }
+    if (db.isTransaction) return read();
 
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -50,9 +55,7 @@ class ProjectionLockedMnemosyneStore extends MnemosyneStore {
       db.exec("COMMIT");
       return result;
     } catch (error) {
-      if (db.isTransaction) {
-        db.exec("ROLLBACK");
-      }
+      if (db.isTransaction) db.exec("ROLLBACK");
       throw error;
     }
   }
@@ -124,6 +127,13 @@ export class MnemosyneReadFacade implements MemoryStore {
         query,
         scene: CONSERVATIVE_SCENE,
         nowIso: new Date().toISOString(),
+        budgets: {
+          ...DEFAULT_BUDGETS,
+          // MemoryStore.search promises a bounded search. The packet's normal
+          // safety budget remains the hard ceiling, while a smaller caller
+          // limit is now actually honored instead of being silently ignored.
+          memoriesItems: boundedFacadeMemoryItems(limit),
+        },
       });
       const resultText = renderMemoryPacket(packet);
       return {
@@ -162,31 +172,16 @@ export class MnemosyneReadFacade implements MemoryStore {
 }
 
 /**
- * Preflight probe (acceptance #9): node:sqlite loadable, migrations/schema
- * compatible, FTS5 answering, database writable — reported in one human
- * line. Never throws.
+ * Read-only preflight for an existing database. It never creates a database,
+ * runs migrations, rebuilds projections, or writes WAL/SHM/journal state.
+ * Use openMnemosyne() explicitly when creation/recovery is intended.
  */
 export function mnemosynePreflight(dbPath: string): { ok: boolean; detail: string } {
-  try {
-    const handle = openMnemosyne(dbPath);
-    try {
-      handle.store.ftsSearch("preflight probe 探针", 1);
-      const version = handle.log.schemaVersion;
-      const items = handle.store.listItems().length;
-      return {
-        ok: true,
-        detail: `mnemosyne ready (packet path; schema v${version}, ${items} items, fts answering, file writable)`,
-      };
-    } finally {
-      handle.log.close();
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      detail:
-        error instanceof Error
-          ? `${error.message} — memory stays off this run, chat is unaffected`
-          : "memory unavailable — chat is unaffected",
-    };
-  }
+  const result = inspectMnemosyneReadOnly(dbPath);
+  return {
+    ok: result.ok,
+    detail: result.ok
+      ? result.detail
+      : `${result.detail} — memory stays off this run, chat is unaffected`,
+  };
 }
