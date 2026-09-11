@@ -2,6 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   EPISODE_RECALL_MAX_CALL_ATTEMPTS,
+  EPISODE_RECALL_MAX_QUERY_CODE_POINTS,
+  EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS,
   TurnScopedEpisodeRecallSession,
 } from "../core/services/episode-recall-session.js";
 import type { EpisodeHistoryHit } from "../core/services/episode-history.js";
@@ -109,6 +111,31 @@ test("malformed source responses fail closed without widening authorization", ()
   assert.deepEqual(session.search({ query: "x", limit: 3 }), []);
   assert.deepEqual(session.read([a]), []);
   assert.equal(readCalls, 0);
+});
+
+test("search enforces query and time-hint bounds in Unicode code points before source access", () => {
+  assert.equal(EPISODE_RECALL_MAX_QUERY_CODE_POINTS, 600);
+  assert.equal(EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS, 120);
+
+  let searchCalls = 0;
+  const session = new TurnScopedEpisodeRecallSession(
+    { search: () => { searchCalls += 1; return []; } },
+    { adjacent: () => [] },
+    { read: () => [] },
+    { maxCallAttempts: 4 },
+  );
+
+  assert.deepEqual(session.search({ query: "😀".repeat(600), limit: 1 }), []);
+  assert.equal(searchCalls, 1, "600 Unicode code points remain admissible");
+
+  assert.deepEqual(session.search({ query: "😀".repeat(601), limit: 1 }), []);
+  assert.equal(searchCalls, 1, "oversized query must fail before source search");
+
+  assert.deepEqual(session.search({ query: "x", timeHint: "界".repeat(120), limit: 1 }), []);
+  assert.equal(searchCalls, 2, "120-code-point time hint remains admissible");
+
+  assert.deepEqual(session.search({ query: "x", timeHint: "界".repeat(121), limit: 1 }), []);
+  assert.equal(searchCalls, 2, "oversized time hint must fail before source search");
 });
 
 test("default shared attempt ledger caps the whole recall turn and fails closed before sources", () => {
