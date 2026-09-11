@@ -8,6 +8,10 @@ construction checkpoints are public releases.
 - Add a portable deterministic Episode adjacency primitive for bounded
   same-conversation forward traversal, with fail-closed conversation witnesses
   and replay ceilings; export it from the package root as `EpisodeAdjacency`.
+- Add a read-only SQLite Episode adjacency adapter over the existing projection
+  schema. Conversation identity remains owned by the Episode row while
+  `episode_messages` mappings are fail-closed consistency witnesses; export it
+  from the package root as `SqliteEpisodeAdjacency`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.

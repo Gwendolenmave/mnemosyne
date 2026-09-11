@@ -26,6 +26,7 @@ export * as DecisionBacklog from "./adapters/automation/decision-backlog.js";
 export * as DecisionWorker from "./adapters/automation/decision-worker.js";
 export * as SqliteMnemosyne from "./adapters/memory/sqlite/mnemosyne-facade.js";
 export * as EpisodeProjection from "./adapters/projections/sqlite/episodes-projection-db.js";
+export * as SqliteEpisodeAdjacency from "./adapters/projections/sqlite/episode-adjacency-source.js";
 export * as BackupRuntime from "./adapters/runtime/backup-runtime.js";
 export * as HealthRuntime from "./adapters/runtime/health-runtime.js";
 export * as TelegramGovernance from "./adapters/telegram/governance.js";
