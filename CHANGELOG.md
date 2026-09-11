@@ -25,6 +25,11 @@ construction checkpoints are public releases.
   current-published provenance validation, request-order preservation, and
   all-or-nothing fail-closed behavior; export it as `EpisodeHistoryRead` and
   `SqliteEpisodeHistoryRead`.
+- Add a turn-scoped Episode recall session composing search, deterministic
+  follow-up and exact read without granting storage-probing authority: only ids
+  actually returned in the same session may be read or used as next-hop
+  anchors, and authorization disappears with the session; export it as
+  `EpisodeRecallSession`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
