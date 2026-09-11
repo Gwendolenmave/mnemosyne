@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { TurnScopedEpisodeRecallSession } from "../core/services/episode-recall-session.js";
+import {
+  EPISODE_RECALL_MAX_CALL_ATTEMPTS,
+  TurnScopedEpisodeRecallSession,
+} from "../core/services/episode-recall-session.js";
 import type { EpisodeHistoryHit } from "../core/services/episode-history.js";
 
 const ep = (ch: string) => `ep-${ch.repeat(32).slice(0, 32)}`;
@@ -26,7 +29,7 @@ const a = ep("a");
 const b = ep("b");
 const c = ep("c");
 
-function fixture() {
+function fixture(options: { maxCallAttempts?: number } = {}) {
   let searchCalls = 0;
   let adjacencyCalls = 0;
   let readCalls = 0;
@@ -53,7 +56,10 @@ function fixture() {
         return hits.every((value) => value !== undefined) ? hits as EpisodeHistoryHit[] : [];
       },
     },
-    { availableBeforeIso: "2026-09-02T00:00:00+08:00" },
+    {
+      availableBeforeIso: "2026-09-02T00:00:00+08:00",
+      maxCallAttempts: options.maxCallAttempts ?? 8,
+    },
   );
   return {
     session,
@@ -103,4 +109,34 @@ test("malformed source responses fail closed without widening authorization", ()
   assert.deepEqual(session.search({ query: "x", limit: 3 }), []);
   assert.deepEqual(session.read([a]), []);
   assert.equal(readCalls, 0);
+});
+
+test("default shared attempt ledger caps the whole recall turn and fails closed before sources", () => {
+  assert.equal(EPISODE_RECALL_MAX_CALL_ATTEMPTS, 4);
+  const { session, counts } = fixture({ maxCallAttempts: EPISODE_RECALL_MAX_CALL_ATTEMPTS });
+
+  assert.deepEqual(session.read([a]), []); // attempt 1: unauthorized, no source read
+  assert.deepEqual(session.search({ query: "first", limit: 3 }).map((item) => item.episodeId), [a]); // 2
+  assert.deepEqual(session.read([a]).map((item) => item.episodeId), [a]); // 3
+  assert.deepEqual(session.followup(a).map((item) => item.episodeId), [b]); // 4
+
+  const before = counts();
+  assert.deepEqual(session.followup(b), []); // exhausted: no adjacency or exact-read source call
+  assert.deepEqual(session.read([b]), []); // still exhausted: no source call
+  assert.deepEqual(counts(), before);
+});
+
+test("maxCallAttempts must be a positive safe integer", () => {
+  const history = { search: () => [] };
+  const adjacency = { adjacent: () => [] };
+  const reader = { read: () => [] };
+
+  assert.throws(
+    () => new TurnScopedEpisodeRecallSession(history, adjacency, reader, { maxCallAttempts: 0 }),
+    /positive safe integer/,
+  );
+  assert.throws(
+    () => new TurnScopedEpisodeRecallSession(history, adjacency, reader, { maxCallAttempts: 1.5 }),
+    /positive safe integer/,
+  );
 });
