@@ -5,6 +5,9 @@ construction checkpoints are public releases.
 
 ## Unreleased
 
+- Add a portable deterministic Episode adjacency primitive for bounded
+  same-conversation forward traversal, with fail-closed conversation witnesses
+  and replay ceilings; export it from the package root as `EpisodeAdjacency`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
