@@ -13,6 +13,14 @@ export interface EpisodeRecallSearchRequest {
 
 /** Default shared call-attempt ceiling for one logical Episode recall turn. */
 export const EPISODE_RECALL_MAX_CALL_ATTEMPTS = 4;
+/** Maximum Unicode code points accepted for one recall query. */
+export const EPISODE_RECALL_MAX_QUERY_CODE_POINTS = 600;
+/** Maximum Unicode code points accepted for one optional lexical time hint. */
+export const EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS = 120;
+
+function codePointLength(value: string): number {
+  return [...value].length;
+}
 
 /**
  * Public-safe turn-scoped composition of Episode search, deterministic
@@ -30,6 +38,12 @@ export const EPISODE_RECALL_MAX_CALL_ATTEMPTS = 4;
  * storage access. Once exhausted, later calls fail closed before invoking any
  * source and cannot widen authorization. The default is four attempts; hosts
  * may choose a stricter or larger positive safe-integer ceiling explicitly.
+ *
+ * Search text is bounded before any source call using Unicode code points, not
+ * UTF-16 code units: query <= 600 and optional time hint <= 120. Oversized
+ * inputs fail closed after consuming their attempt slot and never reach the
+ * projection. This keeps public host composition aligned with the portable
+ * formal-history contract without importing a private tool registry.
  */
 export class TurnScopedEpisodeRecallSession {
   private readonly returned = new Set<string>();
@@ -62,7 +76,11 @@ export class TurnScopedEpisodeRecallSession {
     const limit = Math.floor(request.limit);
     if (limit <= 0 || limit > EPISODE_HISTORY_MAX_RESULTS) return [];
     if (typeof request.query !== "string") return [];
-    if (request.timeHint !== undefined && request.timeHint !== null && typeof request.timeHint !== "string") return [];
+    if (codePointLength(request.query) > EPISODE_RECALL_MAX_QUERY_CODE_POINTS) return [];
+    if (request.timeHint !== undefined && request.timeHint !== null) {
+      if (typeof request.timeHint !== "string") return [];
+      if (codePointLength(request.timeHint) > EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS) return [];
+    }
 
     let hits: readonly EpisodeHistoryHit[];
     try {

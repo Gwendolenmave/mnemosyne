@@ -34,6 +34,10 @@ construction checkpoints are public releases.
   ledger across search, follow-up and exact read. The default ceiling is four
   attempts; malformed and unauthorized calls still consume a slot, and once
   exhausted every operation fails closed before touching its source.
+- Bound turn-scoped Episode search inputs before projection access using Unicode
+  code points: query text is capped at 600 and an optional lexical time hint at
+  120. Oversized inputs consume their attempt slot but fail closed without
+  invoking the history source.
 - Add a content-free audit wrapper for turn-scoped Episode recall. Receipts
   contain only sequence, operation and request/result counts; query text,
   Episode ids, summaries, provenance and source details never enter the audit
