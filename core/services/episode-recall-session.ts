@@ -46,9 +46,11 @@ function returnedPayloadCodePoints(hits: readonly EpisodeHistoryHit[]): number {
  * may choose a stricter or larger positive safe-integer ceiling explicitly.
  *
  * Search text is bounded before any source call using Unicode code points, not
- * UTF-16 code units: query <= 600 and optional time hint <= 120. Oversized
- * inputs fail closed after consuming their attempt slot and never reach the
- * projection.
+ * UTF-16 code units: query must be non-blank and <= 600; an optional time hint
+ * must also be non-blank and <= 120. Invalid inputs fail closed after consuming
+ * their attempt slot and never reach the projection. The lower-level history
+ * primitive may still support an empty query for host-controlled recent-history
+ * browsing; this stricter boundary belongs to the model-facing turn session.
  *
  * Returned structured Episode payloads also share a cumulative Unicode
  * code-point budget (24k by default). The accounting is over the exact JSON
@@ -99,9 +101,11 @@ export class TurnScopedEpisodeRecallSession {
     const limit = Math.floor(request.limit);
     if (limit <= 0 || limit > EPISODE_HISTORY_MAX_RESULTS) return [];
     if (typeof request.query !== "string") return [];
+    if (request.query.trim().length === 0) return [];
     if (codePointLength(request.query) > EPISODE_RECALL_MAX_QUERY_CODE_POINTS) return [];
     if (request.timeHint !== undefined && request.timeHint !== null) {
       if (typeof request.timeHint !== "string") return [];
+      if (request.timeHint.trim().length === 0) return [];
       if (codePointLength(request.timeHint) > EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS) return [];
     }
 
