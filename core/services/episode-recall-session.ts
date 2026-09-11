@@ -11,6 +11,19 @@ export interface EpisodeRecallSearchRequest {
   limit: number;
 }
 
+export type EpisodeRecallDecisionStatus = "returned" | "empty" | "failed" | "limited";
+export type EpisodeRecallDecisionReason =
+  | "invalid_arguments"
+  | "attempt_limit"
+  | "result_limit"
+  | "execution_failed";
+
+/** Content-free outcome of the most recent recall operation. */
+export interface EpisodeRecallDecision {
+  readonly status: EpisodeRecallDecisionStatus;
+  readonly reason?: EpisodeRecallDecisionReason;
+}
+
 /** Default shared call-attempt ceiling for one logical Episode recall turn. */
 export const EPISODE_RECALL_MAX_CALL_ATTEMPTS = 4;
 /** Maximum Unicode code points accepted for one recall query. */
@@ -58,6 +71,12 @@ function returnedPayloadCodePoints(hits: readonly EpisodeHistoryHit[]): number {
  * visible text all count. A result that would exceed the remaining budget is
  * discarded wholesale and grants no new same-turn authorization. Hosts may
  * choose another positive safe-integer ceiling explicitly.
+ *
+ * The most recent operation also leaves a content-free decision receipt. It
+ * distinguishes a genuine empty result from invalid input, attempt exhaustion,
+ * result-budget exhaustion and source/contract failure without retaining query
+ * text, Episode ids, payloads or provenance. Retrieval results remain the sole
+ * content-bearing return value; the receipt exists only for safe observability.
  */
 export class TurnScopedEpisodeRecallSession {
   private readonly returned = new Set<string>();
@@ -66,6 +85,7 @@ export class TurnScopedEpisodeRecallSession {
   private readonly maxReturnedCodePoints: number;
   private callAttempts = 0;
   private returnedCodePoints = 0;
+  private decision: EpisodeRecallDecision = Object.freeze({ status: "empty" });
 
   constructor(
     private readonly history: EpisodeHistorySource,
@@ -94,19 +114,28 @@ export class TurnScopedEpisodeRecallSession {
     this.maxReturnedCodePoints = maxReturnedCodePoints;
   }
 
+  /** Content-free outcome of the most recently attempted operation. */
+  lastDecision(): EpisodeRecallDecision {
+    return this.decision;
+  }
+
   /** Search bounded history and authorize only the hits actually returned. */
   search(request: EpisodeRecallSearchRequest): readonly EpisodeHistoryHit[] {
-    if (!this.consumeAttempt()) return [];
-    if (!Number.isFinite(request.limit)) return [];
+    if (!this.consumeAttempt()) return this.reject("limited", "attempt_limit");
+    if (!Number.isFinite(request.limit)) return this.reject("failed", "invalid_arguments");
     const limit = Math.floor(request.limit);
-    if (limit <= 0 || limit > EPISODE_HISTORY_MAX_RESULTS) return [];
-    if (typeof request.query !== "string") return [];
-    if (request.query.trim().length === 0) return [];
-    if (codePointLength(request.query) > EPISODE_RECALL_MAX_QUERY_CODE_POINTS) return [];
+    if (limit <= 0 || limit > EPISODE_HISTORY_MAX_RESULTS) return this.reject("failed", "invalid_arguments");
+    if (typeof request.query !== "string") return this.reject("failed", "invalid_arguments");
+    if (request.query.trim().length === 0) return this.reject("failed", "invalid_arguments");
+    if (codePointLength(request.query) > EPISODE_RECALL_MAX_QUERY_CODE_POINTS) {
+      return this.reject("failed", "invalid_arguments");
+    }
     if (request.timeHint !== undefined && request.timeHint !== null) {
-      if (typeof request.timeHint !== "string") return [];
-      if (request.timeHint.trim().length === 0) return [];
-      if (codePointLength(request.timeHint) > EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS) return [];
+      if (typeof request.timeHint !== "string") return this.reject("failed", "invalid_arguments");
+      if (request.timeHint.trim().length === 0) return this.reject("failed", "invalid_arguments");
+      if (codePointLength(request.timeHint) > EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS) {
+        return this.reject("failed", "invalid_arguments");
+      }
     }
 
     let hits: readonly EpisodeHistoryHit[];
@@ -118,12 +147,12 @@ export class TurnScopedEpisodeRecallSession {
         limit,
       });
     } catch {
-      return [];
+      return this.reject("failed", "execution_failed");
     }
-    if (!this.validReturnedHits(hits, limit)) return [];
-    if (!this.acceptReturnedPayload(hits)) return [];
+    if (!this.validReturnedHits(hits, limit)) return this.reject("failed", "execution_failed");
+    if (!this.acceptReturnedPayload(hits)) return this.reject("limited", "result_limit");
     this.record(hits);
-    return hits;
+    return this.accept(hits);
   }
 
   /**
@@ -133,8 +162,10 @@ export class TurnScopedEpisodeRecallSession {
    * later-turn capability.
    */
   followup(afterEpisodeId: string): readonly EpisodeHistoryHit[] {
-    if (!this.consumeAttempt()) return [];
-    if (!this.returned.has(afterEpisodeId)) return [];
+    if (!this.consumeAttempt()) return this.reject("limited", "attempt_limit");
+    if (!isEpisodeId(afterEpisodeId) || !this.returned.has(afterEpisodeId)) {
+      return this.reject("failed", "invalid_arguments");
+    }
 
     let ids: readonly string[];
     try {
@@ -145,17 +176,17 @@ export class TurnScopedEpisodeRecallSession {
         limit: 1,
       });
     } catch {
-      return [];
+      return this.reject("failed", "execution_failed");
     }
-    if (ids.length > 1) return [];
-    if (ids.length === 0) return [];
-    if (!isEpisodeId(ids[0]!)) return [];
+    if (!Array.isArray(ids) || ids.length > 1) return this.reject("failed", "execution_failed");
+    if (ids.length === 0) return this.accept([]);
+    if (!isEpisodeId(ids[0]!)) return this.reject("failed", "execution_failed");
 
     const hits = this.readExact(ids);
-    if (hits.length !== 1 || hits[0]!.episodeId !== ids[0]) return [];
-    if (!this.acceptReturnedPayload(hits)) return [];
+    if (hits === null) return this.reject("failed", "execution_failed");
+    if (!this.acceptReturnedPayload(hits)) return this.reject("limited", "result_limit");
     this.record(hits);
-    return hits;
+    return this.accept(hits);
   }
 
   /**
@@ -163,15 +194,21 @@ export class TurnScopedEpisodeRecallSession {
    * this same session. Unknown ids fail before the read source is invoked.
    */
   read(episodeIds: readonly string[]): readonly EpisodeHistoryHit[] {
-    if (!this.consumeAttempt()) return [];
-    if (episodeIds.length < 1 || episodeIds.length > EPISODE_HISTORY_MAX_READ_IDS) return [];
+    if (!this.consumeAttempt()) return this.reject("limited", "attempt_limit");
+    if (!Array.isArray(episodeIds) || episodeIds.length < 1 || episodeIds.length > EPISODE_HISTORY_MAX_READ_IDS) {
+      return this.reject("failed", "invalid_arguments");
+    }
     const unique = new Set<string>();
     for (const id of episodeIds) {
-      if (!isEpisodeId(id) || unique.has(id) || !this.returned.has(id)) return [];
+      if (!isEpisodeId(id) || unique.has(id) || !this.returned.has(id)) {
+        return this.reject("failed", "invalid_arguments");
+      }
       unique.add(id);
     }
     const hits = this.readExact(episodeIds);
-    return this.acceptReturnedPayload(hits) ? hits : [];
+    if (hits === null) return this.reject("failed", "execution_failed");
+    if (!this.acceptReturnedPayload(hits)) return this.reject("limited", "result_limit");
+    return this.accept(hits);
   }
 
   private consumeAttempt(): boolean {
@@ -187,7 +224,7 @@ export class TurnScopedEpisodeRecallSession {
     return true;
   }
 
-  private readExact(ids: readonly string[]): readonly EpisodeHistoryHit[] {
+  private readExact(ids: readonly string[]): readonly EpisodeHistoryHit[] | null {
     let hits: readonly EpisodeHistoryHit[];
     try {
       hits = this.reader.read({
@@ -195,11 +232,11 @@ export class TurnScopedEpisodeRecallSession {
         availableBeforeIso: this.availableBeforeIso,
       });
     } catch {
-      return [];
+      return null;
     }
-    if (hits.length !== ids.length || !this.validReturnedHits(hits, ids.length)) return [];
+    if (hits.length !== ids.length || !this.validReturnedHits(hits, ids.length)) return null;
     for (let index = 0; index < ids.length; index += 1) {
-      if (hits[index]!.episodeId !== ids[index]) return [];
+      if (hits[index]!.episodeId !== ids[index]) return null;
     }
     return hits;
   }
@@ -218,5 +255,18 @@ export class TurnScopedEpisodeRecallSession {
 
   private record(hits: readonly EpisodeHistoryHit[]): void {
     for (const hit of hits) this.returned.add(hit.episodeId);
+  }
+
+  private accept(hits: readonly EpisodeHistoryHit[]): readonly EpisodeHistoryHit[] {
+    this.decision = Object.freeze({ status: hits.length > 0 ? "returned" : "empty" });
+    return hits;
+  }
+
+  private reject(
+    status: Extract<EpisodeRecallDecisionStatus, "failed" | "limited">,
+    reason: EpisodeRecallDecisionReason,
+  ): readonly EpisodeHistoryHit[] {
+    this.decision = Object.freeze({ status, reason });
+    return [];
   }
 }

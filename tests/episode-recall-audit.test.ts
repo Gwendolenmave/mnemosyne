@@ -21,11 +21,12 @@ const privateLookingHit: EpisodeHistoryHit = {
   sourceHash,
 };
 
-function underlying(): TurnScopedEpisodeRecallSession {
+function underlying(options: { maxCallAttempts?: number; maxReturnedCodePoints?: number } = {}): TurnScopedEpisodeRecallSession {
   return new TurnScopedEpisodeRecallSession(
     { search: (request) => request.query === "secret-query" ? [privateLookingHit] : [] },
     { adjacent: () => [] },
     { read: (request) => request.episodeIds[0] === episodeId ? [privateLookingHit] : [] },
+    options,
   );
 }
 
@@ -47,6 +48,76 @@ test("audit receipts contain only operation metadata, never recall content or id
   for (const forbidden of ["secret-query", "secret-time", episodeId, sourceHash, privateLookingHit.title, privateLookingHit.summary]) {
     assert.equal(serialized.includes(forbidden), false, `audit receipt leaked ${forbidden}`);
   }
+});
+
+test("audit distinguishes genuine empty from structural failures without leaking content", () => {
+  const events: EpisodeRecallAuditEvent[] = [];
+  const session = new AuditedEpisodeRecallSession(
+    underlying({ maxCallAttempts: 4, maxReturnedCodePoints: 10 }),
+    (event) => events.push(event),
+  );
+
+  assert.deepEqual(session.search({ query: "no-hit", limit: 1 }), []);
+  assert.deepEqual(session.search({ query: "   ", limit: 1 }), []);
+  assert.deepEqual(session.search({ query: "secret-query", limit: 1 }), []);
+  assert.deepEqual(session.search({ query: "no-hit", limit: 1 }), []);
+  assert.deepEqual(session.search({ query: "no-hit", limit: 1 }), []);
+
+  assert.deepEqual(events, [
+    { sequence: 1, operation: "search", requestedCount: 1, returnedCount: 0, outcome: "empty" },
+    {
+      sequence: 2,
+      operation: "search",
+      requestedCount: 1,
+      returnedCount: 0,
+      outcome: "failed",
+      reason: "invalid_arguments",
+    },
+    {
+      sequence: 3,
+      operation: "search",
+      requestedCount: 1,
+      returnedCount: 0,
+      outcome: "limited",
+      reason: "result_limit",
+    },
+    { sequence: 4, operation: "search", requestedCount: 1, returnedCount: 0, outcome: "empty" },
+    {
+      sequence: 5,
+      operation: "search",
+      requestedCount: 1,
+      returnedCount: 0,
+      outcome: "limited",
+      reason: "attempt_limit",
+    },
+  ]);
+
+  const serialized = JSON.stringify(events);
+  for (const forbidden of ["secret-query", episodeId, sourceHash, privateLookingHit.title, privateLookingHit.summary]) {
+    assert.equal(serialized.includes(forbidden), false, `audit receipt leaked ${forbidden}`);
+  }
+});
+
+test("source failure is typed structurally and remains content-free", () => {
+  const events: EpisodeRecallAuditEvent[] = [];
+  const raw = new TurnScopedEpisodeRecallSession(
+    { search: () => { throw new Error("synthetic source failure"); } },
+    { adjacent: () => [] },
+    { read: () => [] },
+  );
+  const session = new AuditedEpisodeRecallSession(raw, (event) => events.push(event));
+
+  assert.deepEqual(session.search({ query: "secret-query", limit: 1 }), []);
+  assert.deepEqual(events, [{
+    sequence: 1,
+    operation: "search",
+    requestedCount: 1,
+    returnedCount: 0,
+    outcome: "failed",
+    reason: "execution_failed",
+  }]);
+  assert.equal(JSON.stringify(events).includes("synthetic source failure"), false);
+  assert.equal(JSON.stringify(events).includes("secret-query"), false);
 });
 
 test("a throwing audit sink cannot change recall results or authorization", () => {
