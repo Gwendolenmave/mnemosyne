@@ -1,9 +1,13 @@
 import type { EpisodeHistoryHit } from "./episode-history.js";
-import type { EpisodeRecallSearchRequest } from "./episode-recall-session.js";
+import type {
+  EpisodeRecallDecisionReason,
+  EpisodeRecallDecisionStatus,
+  EpisodeRecallSearchRequest,
+} from "./episode-recall-session.js";
 import { TurnScopedEpisodeRecallSession } from "./episode-recall-session.js";
 
 export type EpisodeRecallAuditOperation = "search" | "followup" | "read";
-export type EpisodeRecallAuditOutcome = "returned" | "empty";
+export type EpisodeRecallAuditOutcome = EpisodeRecallDecisionStatus;
 
 /**
  * Content-free observation of one public Episode recall operation.
@@ -11,6 +15,8 @@ export type EpisodeRecallAuditOutcome = "returned" | "empty";
  * Deliberately excludes query text, time hints, Episode ids, titles, summaries,
  * provenance hashes, source paths and provider payloads. Hosts may persist these
  * receipts without turning an audit trail into a second memory transcript.
+ * Failure reasons are structural only: they distinguish invalid input, attempt
+ * exhaustion, result-budget exhaustion and source/contract failure.
  */
 export interface EpisodeRecallAuditEvent {
   readonly sequence: number;
@@ -18,6 +24,7 @@ export interface EpisodeRecallAuditEvent {
   readonly requestedCount: number;
   readonly returnedCount: number;
   readonly outcome: EpisodeRecallAuditOutcome;
+  readonly reason?: EpisodeRecallDecisionReason;
 }
 
 export type EpisodeRecallAuditSink = (event: EpisodeRecallAuditEvent) => void;
@@ -60,12 +67,14 @@ export class AuditedEpisodeRecallSession {
   }
 
   private emit(operation: EpisodeRecallAuditOperation, requestedCount: number, returnedCount: number): void {
+    const decision = this.session.lastDecision();
     const event: EpisodeRecallAuditEvent = Object.freeze({
       sequence: ++this.sequence,
       operation,
       requestedCount,
       returnedCount,
-      outcome: returnedCount > 0 ? "returned" : "empty",
+      outcome: decision.status,
+      ...(decision.reason === undefined ? {} : { reason: decision.reason }),
     });
     try {
       this.sink(event);
