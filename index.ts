@@ -25,6 +25,7 @@ export * as EpisodeFollowup from "./core/services/episode-followup-session.js";
 export * as EpisodeHistory from "./core/services/episode-history.js";
 export * as EpisodeHistoryRead from "./core/services/episode-history-read.js";
 export * as EpisodeRecallSession from "./core/services/episode-recall-session.js";
+export * as EpisodeRecallAudit from "./core/services/episode-recall-audit.js";
 export * as ProposalAutomation from "./adapters/automation/companion-proposals.js";
 export * as DecisionBacklog from "./adapters/automation/decision-backlog.js";
 export * as DecisionWorker from "./adapters/automation/decision-worker.js";

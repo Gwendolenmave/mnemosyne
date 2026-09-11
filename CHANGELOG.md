@@ -30,6 +30,11 @@ construction checkpoints are public releases.
   actually returned in the same session may be read or used as next-hop
   anchors, and authorization disappears with the session; export it as
   `EpisodeRecallSession`.
+- Add a content-free audit wrapper for turn-scoped Episode recall. Receipts
+  contain only sequence, operation and request/result counts; query text,
+  Episode ids, summaries, provenance and source details never enter the audit
+  event, and a broken audit sink cannot change recall behavior. Export it as
+  `EpisodeRecallAudit`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
