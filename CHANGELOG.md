@@ -12,6 +12,10 @@ construction checkpoints are public releases.
   schema. Conversation identity remains owned by the Episode row while
   `episode_messages` mappings are fail-closed consistency witnesses; export it
   from the package root as `SqliteEpisodeAdjacency`.
+- Add a turn-scoped Episode follow-up gate for model-controlled multihop recall:
+  only Episode ids already returned in the same logical turn may become
+  adjacency anchors, and successful hits become eligible for the next bounded
+  hop; export it from the package root as `EpisodeFollowup`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.

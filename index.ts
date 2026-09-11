@@ -21,6 +21,7 @@ export * as Reliability from "./core/services/reliability-core.js";
 export * as EpisodePass1 from "./core/services/episode-pass1.js";
 export * as EpisodePass2 from "./core/services/episode-summary-core.js";
 export * as EpisodeAdjacency from "./core/services/episode-adjacency.js";
+export * as EpisodeFollowup from "./core/services/episode-followup-session.js";
 export * as ProposalAutomation from "./adapters/automation/companion-proposals.js";
 export * as DecisionBacklog from "./adapters/automation/decision-backlog.js";
 export * as DecisionWorker from "./adapters/automation/decision-worker.js";
