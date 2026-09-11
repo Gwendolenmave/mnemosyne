@@ -17,9 +17,15 @@ export const EPISODE_RECALL_MAX_CALL_ATTEMPTS = 4;
 export const EPISODE_RECALL_MAX_QUERY_CODE_POINTS = 600;
 /** Maximum Unicode code points accepted for one optional lexical time hint. */
 export const EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS = 120;
+/** Default cumulative returned structured-payload ceiling for one recall turn. */
+export const EPISODE_RECALL_MAX_RETURNED_CODE_POINTS = 24_000;
 
 function codePointLength(value: string): number {
   return [...value].length;
+}
+
+function returnedPayloadCodePoints(hits: readonly EpisodeHistoryHit[]): number {
+  return codePointLength(JSON.stringify(hits));
 }
 
 /**
@@ -42,20 +48,32 @@ function codePointLength(value: string): number {
  * Search text is bounded before any source call using Unicode code points, not
  * UTF-16 code units: query <= 600 and optional time hint <= 120. Oversized
  * inputs fail closed after consuming their attempt slot and never reach the
- * projection. This keeps public host composition aligned with the portable
- * formal-history contract without importing a private tool registry.
+ * projection.
+ *
+ * Returned structured Episode payloads also share a cumulative Unicode
+ * code-point budget (24k by default). The accounting is over the exact JSON
+ * representation of the public hit arrays, so ids, provenance metadata and
+ * visible text all count. A result that would exceed the remaining budget is
+ * discarded wholesale and grants no new same-turn authorization. Hosts may
+ * choose another positive safe-integer ceiling explicitly.
  */
 export class TurnScopedEpisodeRecallSession {
   private readonly returned = new Set<string>();
   private readonly availableBeforeIso: string | null;
   private readonly maxCallAttempts: number;
+  private readonly maxReturnedCodePoints: number;
   private callAttempts = 0;
+  private returnedCodePoints = 0;
 
   constructor(
     private readonly history: EpisodeHistorySource,
     private readonly adjacency: EpisodeAdjacentIdSource,
     private readonly reader: EpisodeHistoryReadSource,
-    options: { availableBeforeIso?: string | null; maxCallAttempts?: number } = {},
+    options: {
+      availableBeforeIso?: string | null;
+      maxCallAttempts?: number;
+      maxReturnedCodePoints?: number;
+    } = {},
   ) {
     const ceiling = options.availableBeforeIso ?? null;
     if (ceiling !== null && !Number.isFinite(Date.parse(ceiling))) {
@@ -65,8 +83,13 @@ export class TurnScopedEpisodeRecallSession {
     if (!Number.isSafeInteger(maxCallAttempts) || maxCallAttempts <= 0) {
       throw new Error("maxCallAttempts must be a positive safe integer");
     }
+    const maxReturnedCodePoints = options.maxReturnedCodePoints ?? EPISODE_RECALL_MAX_RETURNED_CODE_POINTS;
+    if (!Number.isSafeInteger(maxReturnedCodePoints) || maxReturnedCodePoints <= 0) {
+      throw new Error("maxReturnedCodePoints must be a positive safe integer");
+    }
     this.availableBeforeIso = ceiling;
     this.maxCallAttempts = maxCallAttempts;
+    this.maxReturnedCodePoints = maxReturnedCodePoints;
   }
 
   /** Search bounded history and authorize only the hits actually returned. */
@@ -94,6 +117,7 @@ export class TurnScopedEpisodeRecallSession {
       return [];
     }
     if (!this.validReturnedHits(hits, limit)) return [];
+    if (!this.acceptReturnedPayload(hits)) return [];
     this.record(hits);
     return hits;
   }
@@ -125,6 +149,7 @@ export class TurnScopedEpisodeRecallSession {
 
     const hits = this.readExact(ids);
     if (hits.length !== 1 || hits[0]!.episodeId !== ids[0]) return [];
+    if (!this.acceptReturnedPayload(hits)) return [];
     this.record(hits);
     return hits;
   }
@@ -141,12 +166,20 @@ export class TurnScopedEpisodeRecallSession {
       if (!isEpisodeId(id) || unique.has(id) || !this.returned.has(id)) return [];
       unique.add(id);
     }
-    return this.readExact(episodeIds);
+    const hits = this.readExact(episodeIds);
+    return this.acceptReturnedPayload(hits) ? hits : [];
   }
 
   private consumeAttempt(): boolean {
     if (this.callAttempts >= this.maxCallAttempts) return false;
     this.callAttempts += 1;
+    return true;
+  }
+
+  private acceptReturnedPayload(hits: readonly EpisodeHistoryHit[]): boolean {
+    const cost = returnedPayloadCodePoints(hits);
+    if (cost > this.maxReturnedCodePoints - this.returnedCodePoints) return false;
+    this.returnedCodePoints += cost;
     return true;
   }
 

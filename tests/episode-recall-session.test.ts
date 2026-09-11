@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   EPISODE_RECALL_MAX_CALL_ATTEMPTS,
   EPISODE_RECALL_MAX_QUERY_CODE_POINTS,
+  EPISODE_RECALL_MAX_RETURNED_CODE_POINTS,
   EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS,
   TurnScopedEpisodeRecallSession,
 } from "../core/services/episode-recall-session.js";
@@ -31,7 +32,7 @@ const a = ep("a");
 const b = ep("b");
 const c = ep("c");
 
-function fixture(options: { maxCallAttempts?: number } = {}) {
+function fixture(options: { maxCallAttempts?: number; maxReturnedCodePoints?: number } = {}) {
   let searchCalls = 0;
   let adjacencyCalls = 0;
   let readCalls = 0;
@@ -61,6 +62,7 @@ function fixture(options: { maxCallAttempts?: number } = {}) {
     {
       availableBeforeIso: "2026-09-02T00:00:00+08:00",
       maxCallAttempts: options.maxCallAttempts ?? 8,
+      maxReturnedCodePoints: options.maxReturnedCodePoints ?? EPISODE_RECALL_MAX_RETURNED_CODE_POINTS,
     },
   );
   return {
@@ -138,6 +140,40 @@ test("search enforces query and time-hint bounds in Unicode code points before s
   assert.equal(searchCalls, 2, "oversized time hint must fail before source search");
 });
 
+test("returned structured payloads share a cumulative Unicode code-point budget", () => {
+  assert.equal(EPISODE_RECALL_MAX_RETURNED_CODE_POINTS, 24_000);
+  const firstHit = hit(a, "😀".repeat(20));
+  const firstCost = [...JSON.stringify([firstHit])].length;
+  let searchCalls = 0;
+  let readCalls = 0;
+  const session = new TurnScopedEpisodeRecallSession(
+    { search: () => { searchCalls += 1; return [firstHit]; } },
+    { adjacent: () => [] },
+    { read: () => { readCalls += 1; return [firstHit]; } },
+    { maxCallAttempts: 4, maxReturnedCodePoints: firstCost },
+  );
+
+  assert.deepEqual(session.search({ query: "first", limit: 1 }).map((item) => item.episodeId), [a]);
+  assert.equal(searchCalls, 1);
+  assert.deepEqual(session.read([a]), [], "second payload would exceed the shared return budget");
+  assert.equal(readCalls, 1, "budget is checked against the validated result returned by the source");
+});
+
+test("an over-budget search result grants no authorization", () => {
+  const oversized = hit(a, "界".repeat(80));
+  let readCalls = 0;
+  const session = new TurnScopedEpisodeRecallSession(
+    { search: () => [oversized] },
+    { adjacent: () => [] },
+    { read: () => { readCalls += 1; return [oversized]; } },
+    { maxCallAttempts: 4, maxReturnedCodePoints: 10 },
+  );
+
+  assert.deepEqual(session.search({ query: "first", limit: 1 }), []);
+  assert.deepEqual(session.read([a]), []);
+  assert.equal(readCalls, 0, "discarded search results must not widen exact-read authorization");
+});
+
 test("default shared attempt ledger caps the whole recall turn and fails closed before sources", () => {
   assert.equal(EPISODE_RECALL_MAX_CALL_ATTEMPTS, 4);
   const { session, counts } = fixture({ maxCallAttempts: EPISODE_RECALL_MAX_CALL_ATTEMPTS });
@@ -153,7 +189,7 @@ test("default shared attempt ledger caps the whole recall turn and fails closed 
   assert.deepEqual(counts(), before);
 });
 
-test("maxCallAttempts must be a positive safe integer", () => {
+test("session budget overrides must be positive safe integers", () => {
   const history = { search: () => [] };
   const adjacency = { adjacent: () => [] };
   const reader = { read: () => [] };
@@ -164,6 +200,14 @@ test("maxCallAttempts must be a positive safe integer", () => {
   );
   assert.throws(
     () => new TurnScopedEpisodeRecallSession(history, adjacency, reader, { maxCallAttempts: 1.5 }),
+    /positive safe integer/,
+  );
+  assert.throws(
+    () => new TurnScopedEpisodeRecallSession(history, adjacency, reader, { maxReturnedCodePoints: 0 }),
+    /positive safe integer/,
+  );
+  assert.throws(
+    () => new TurnScopedEpisodeRecallSession(history, adjacency, reader, { maxReturnedCodePoints: 1.5 }),
     /positive safe integer/,
   );
 });
