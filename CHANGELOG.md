@@ -44,6 +44,11 @@ construction checkpoints are public releases.
   points by default across search, deterministic follow-up and exact read. A
   result that would cross the remaining budget is discarded atomically and
   grants no new same-turn Episode authorization.
+- Add a content-free recall outcome taxonomy so observability can distinguish a
+  genuine empty result from invalid arguments, attempt exhaustion, result-budget
+  exhaustion and source/contract failure without retaining query text, Episode
+  ids or payload content. The audit wrapper carries the same structural status
+  and reason while preserving its no-content receipt contract.
 - Add a content-free audit wrapper for turn-scoped Episode recall. Receipts
   contain only sequence, operation and request/result counts; query text,
   Episode ids, summaries, provenance and source details never enter the audit
