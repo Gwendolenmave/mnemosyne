@@ -16,6 +16,10 @@ construction checkpoints are public releases.
   only Episode ids already returned in the same logical turn may become
   adjacency anchors, and successful hits become eligible for the next bounded
   hop; export it from the package root as `EpisodeFollowup`.
+- Add a bounded read-only Episode history/search surface with lexical FTS
+  ranking, explicit replay ceilings, current-published integrity validation,
+  and provenance-bearing candidates; export it as `EpisodeHistory` and
+  `SqliteEpisodeHistory` without adding semantic/vector retrieval.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
