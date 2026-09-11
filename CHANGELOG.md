@@ -20,6 +20,11 @@ construction checkpoints are public releases.
   ranking, explicit replay ceilings, current-published integrity validation,
   and provenance-bearing candidates; export it as `EpisodeHistory` and
   `SqliteEpisodeHistory` without adding semantic/vector retrieval.
+- Add a bounded exact-id Episode history read surface for host-controlled
+  follow-up/full-summary reads: 1..2 unique ids, strict replay ceilings,
+  current-published provenance validation, request-order preservation, and
+  all-or-nothing fail-closed behavior; export it as `EpisodeHistoryRead` and
+  `SqliteEpisodeHistoryRead`.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
