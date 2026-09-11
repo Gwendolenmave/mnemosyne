@@ -30,6 +30,10 @@ construction checkpoints are public releases.
   actually returned in the same session may be read or used as next-hop
   anchors, and authorization disappears with the session; export it as
   `EpisodeRecallSession`.
+- Bound the turn-scoped Episode recall session with one shared call-attempt
+  ledger across search, follow-up and exact read. The default ceiling is four
+  attempts; malformed and unauthorized calls still consume a slot, and once
+  exhausted every operation fails closed before touching its source.
 - Add a content-free audit wrapper for turn-scoped Episode recall. Receipts
   contain only sequence, operation and request/result counts; query text,
   Episode ids, summaries, provenance and source details never enter the audit
