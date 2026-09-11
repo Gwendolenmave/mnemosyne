@@ -35,9 +35,15 @@ construction checkpoints are public releases.
   attempts; malformed and unauthorized calls still consume a slot, and once
   exhausted every operation fails closed before touching its source.
 - Bound turn-scoped Episode search inputs before projection access using Unicode
-  code points: query text is capped at 600 and an optional lexical time hint at
-  120. Oversized inputs consume their attempt slot but fail closed without
-  invoking the history source.
+  code points: model-facing query text must be non-blank and is capped at 600;
+  an optional lexical time hint must be non-blank and is capped at 120. Invalid
+  inputs consume their attempt slot but fail closed without invoking the history
+  source, while the lower-level host-controlled history primitive remains free
+  to support empty-query recent-history browsing.
+- Bound cumulative turn-scoped Episode recall output to 24,000 Unicode code
+  points by default across search, deterministic follow-up and exact read. A
+  result that would cross the remaining budget is discarded atomically and
+  grants no new same-turn Episode authorization.
 - Add a content-free audit wrapper for turn-scoped Episode recall. Receipts
   contain only sequence, operation and request/result counts; query text,
   Episode ids, summaries, provenance and source details never enter the audit

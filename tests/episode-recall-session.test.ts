@@ -115,7 +115,7 @@ test("malformed source responses fail closed without widening authorization", ()
   assert.equal(readCalls, 0);
 });
 
-test("search enforces query and time-hint bounds in Unicode code points before source access", () => {
+test("search enforces non-blank query/time-hint and Unicode bounds before source access", () => {
   assert.equal(EPISODE_RECALL_MAX_QUERY_CODE_POINTS, 600);
   assert.equal(EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS, 120);
 
@@ -124,14 +124,21 @@ test("search enforces query and time-hint bounds in Unicode code points before s
     { search: () => { searchCalls += 1; return []; } },
     { adjacent: () => [] },
     { read: () => [] },
-    { maxCallAttempts: 4 },
+    { maxCallAttempts: 8 },
   );
+
+  assert.deepEqual(session.search({ query: "", limit: 1 }), []);
+  assert.deepEqual(session.search({ query: "   \t\n", limit: 1 }), []);
+  assert.equal(searchCalls, 0, "blank model-facing queries must fail before source search");
 
   assert.deepEqual(session.search({ query: "😀".repeat(600), limit: 1 }), []);
   assert.equal(searchCalls, 1, "600 Unicode code points remain admissible");
 
   assert.deepEqual(session.search({ query: "😀".repeat(601), limit: 1 }), []);
   assert.equal(searchCalls, 1, "oversized query must fail before source search");
+
+  assert.deepEqual(session.search({ query: "x", timeHint: "   ", limit: 1 }), []);
+  assert.equal(searchCalls, 1, "blank optional time hint must fail before source search");
 
   assert.deepEqual(session.search({ query: "x", timeHint: "界".repeat(120), limit: 1 }), []);
   assert.equal(searchCalls, 2, "120-code-point time hint remains admissible");
