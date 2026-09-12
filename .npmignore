@@ -1,0 +1,7 @@
+build/tests/
+node_modules/
+coverage/
+data/
+logs/
+backups/
+receipts/

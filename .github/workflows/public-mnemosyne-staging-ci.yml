@@ -1,0 +1,152 @@
+name: public-mnemosyne-staging-ci
+
+on:
+  push:
+    branches:
+      - main
+      - "fix/public-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-mnemosyne-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Mnemosyne public verify
+    if: >-
+      github.repository == 'Gwendolenmave/mnemosyne' &&
+      github.event.repository.private == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Clear dedicated verification checkouts
+        shell: bash
+        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_verify" "$GITHUB_WORKSPACE/_public_mnemosyne_history"
+
+      - name: Checkout exact head only
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: _public_mnemosyne_verify
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up required Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: _public_mnemosyne_verify/.nvmrc
+
+      - name: Confirm isolated exact-head checkout
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          node --version
+          npm --version
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list --all --count)" -eq 1
+          test "$(git rev-parse --is-shallow-repository)" = "true"
+
+      - name: Install locked dependencies
+        working-directory: _public_mnemosyne_verify
+        run: npm ci --ignore-scripts
+
+      - name: Run exact-head source verification
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          npm run verify:head
+
+      - name: Inspect package file manifest
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > /tmp/mnemosyne-pack-manifest.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('/tmp/mnemosyne-pack-manifest.json', 'utf8'));
+          if (!Array.isArray(report) || report.length !== 1 || !Array.isArray(report[0].files)) {
+            throw new Error('unexpected npm pack manifest shape');
+          }
+          const files = report[0].files.map((entry) => entry.path);
+          const required = ['package.json', 'LICENSE.md', 'README.md', 'build/index.js', 'build/index.d.ts'];
+          for (const path of required) {
+            if (!files.includes(path)) throw new Error(`package manifest missing ${path}`);
+          }
+          const forbidden = files.filter((path) =>
+            path.startsWith('build/tests/') ||
+            /(^|\/)(data|logs|backups|receipts|secrets)(\/|$)/.test(path) ||
+            /(^|\/)\.env(?:\.|$)/.test(path) ||
+            /\.(?:db|sqlite|sqlite3|wal|shm|pem|key|p12|pfx|keystore|jsonl|ndjson)$/i.test(path)
+          );
+          if (forbidden.length !== 0) {
+            throw new Error(`forbidden package files: ${forbidden.join(', ')}`);
+          }
+          console.log(`PASS package manifest files=${files.length}`);
+          NODE
+
+      - name: Build and smoke-test the packed consumer surface
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mnemosyne-consumer /tmp/mnemosyne-package-audit
+          npm pack --json > /tmp/mnemosyne-pack.json
+          TARBALL="$(node -e "const r=require('/tmp/mnemosyne-pack.json'); if(!Array.isArray(r)||r.length!==1||!r[0].filename) process.exit(2); process.stdout.write(r[0].filename)")"
+          TARBALL_PATH="$PWD/$TARBALL"
+          test -f "$TARBALL_PATH"
+
+          mkdir -p /tmp/mnemosyne-package-audit
+          tar -xzf "$TARBALL_PATH" -C /tmp/mnemosyne-package-audit
+          python3 scripts/scan.py /tmp/mnemosyne-package-audit/package
+
+          mkdir -p /tmp/mnemosyne-consumer
+          cd /tmp/mnemosyne-consumer
+          npm init -y >/dev/null
+          npm install "$TARBALL_PATH" --ignore-scripts --no-audit --no-fund >/dev/null
+          node --input-type=module <<'NODE'
+          const root = await import('@delos/mnemosyne');
+          const requiredRoot = [
+            'MemoryDomain', 'Governance', 'Curation', 'Retention', 'Anamnesis',
+            'EpisodeHistory', 'EpisodeHistoryRead', 'EpisodeAdjacency',
+            'EpisodeRecallSession', 'EpisodeRecallAudit'
+          ];
+          for (const name of requiredRoot) {
+            if (!(name in root)) throw new Error(`packed root export missing ${name}`);
+          }
+          const core = await import('@delos/mnemosyne/core/services/episode-history');
+          if (Object.keys(core).length === 0) throw new Error('packed core subpath resolved to an empty module');
+          const adapter = await import('@delos/mnemosyne/adapters/projections/sqlite/episode-history-source');
+          if (Object.keys(adapter).length === 0) throw new Error('packed adapter subpath resolved to an empty module');
+          console.log('PASS packed consumer imports');
+          NODE
+
+      - name: Checkout full public history at exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: _public_mnemosyne_history
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm full-history checkout
+        shell: bash
+        working-directory: _public_mnemosyne_history
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test "$(git rev-list --all --count)" -gt 1
+
+      - name: Scan complete public Git history
+        shell: bash
+        working-directory: _public_mnemosyne_history
+        run: |
+          set -euo pipefail
+          python3 scripts/scan-history.py
