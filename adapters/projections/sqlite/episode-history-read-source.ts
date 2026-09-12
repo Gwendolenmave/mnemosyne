@@ -90,7 +90,7 @@ export function readEpisodeHistoryByIdsFromSqlite(input: {
   if (!validateEpisodeHistoryReadRequest(request)) return [];
   const ceiling = request.availableBeforeIso ?? null;
   const ceilingMs = ceiling === null ? null : Date.parse(ceiling);
-  if (ceiling !== null && !Number.isFinite(ceilingMs)) return [];
+  if (ceilingMs !== null && !Number.isFinite(ceilingMs)) return [];
   const statement = db.prepare(
     `SELECT ${COLUMNS} FROM episodes WHERE episode_id = ? AND published_payload IS NOT NULL`,
   );
