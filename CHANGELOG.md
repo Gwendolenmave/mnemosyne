@@ -54,6 +54,17 @@ construction checkpoints are public releases.
   Episode ids, summaries, provenance and source details never enter the audit
   event, and a broken audit sink cannot change recall behavior. Export it as
   `EpisodeRecallAudit`.
+- Validate custom Episode recall source results at runtime before payload
+  budgeting or same-turn authorization. Malformed source responses fail closed
+  as content-free execution failures rather than widening recall authority.
+- Harden the custom-source trust boundary further by independently enforcing
+  Episode temporal ordering, the session replay ceiling, and canonical full
+  SHA-256 provenance before a returned hit can authorize exact read or
+  deterministic follow-up.
+- Compare Episode chronology, replay ceilings and recent-history ordering as
+  absolute instants rather than ISO text. Mixed UTC offsets therefore cannot
+  change adjacency eligibility, history ordering, or exact-read replay bounds;
+  synthetic regressions cover core and SQLite paths.
 - Preserve canonical creation evidence and first-class `explicit / observed /
   inferred / imported` source-basis semantics across projection rebuild and
   close/reopen, with provenance contradictions failing closed.
@@ -66,6 +77,10 @@ construction checkpoints are public releases.
 - Add the portable retention authority contract so short-lived and episodic
   evidence is classified before ordinary long-term admission; export it from
   the package root as `Retention`.
+- Add a writer-free historical retention replay receipt that reruns the same
+  deterministic classifier while exposing no writer, backlog or projection
+  capability. Invalid replay input remains fail-closed and does not create a
+  second durable-admission path.
 - Expose formal curation from the package root through the stable `Curation`
   facade rather than requiring hosts to depend on individual service files.
 - Keep event history canonical and projections rebuildable, including projection
