@@ -66,8 +66,9 @@ export function selectAdjacentEpisodeIdsFromSqlite(input: {
     .prepare(
       "SELECT episode_id, channel, thread, started_at_utc, ended_at_utc, published_payload " +
         "FROM episodes " +
-        "WHERE channel = ? AND thread = ? AND started_at_utc >= ? AND published_payload IS NOT NULL " +
-        "ORDER BY started_at_utc, ended_at_utc, episode_id",
+        "WHERE channel = ? AND thread = ? " +
+        "AND julianday(started_at_utc) >= julianday(?) AND published_payload IS NOT NULL " +
+        "ORDER BY julianday(started_at_utc), julianday(ended_at_utc), episode_id",
     )
     .all(anchor.channel, anchor.thread, anchor.started_at_utc) as unknown as EpisodeProjectionAdjacencyRow[];
 
