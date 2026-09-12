@@ -89,6 +89,8 @@ export function readEpisodeHistoryByIdsFromSqlite(input: {
   const { db, request } = input;
   if (!validateEpisodeHistoryReadRequest(request)) return [];
   const ceiling = request.availableBeforeIso ?? null;
+  const ceilingMs = ceiling === null ? null : Date.parse(ceiling);
+  if (ceiling !== null && !Number.isFinite(ceilingMs)) return [];
   const statement = db.prepare(
     `SELECT ${COLUMNS} FROM episodes WHERE episode_id = ? AND published_payload IS NOT NULL`,
   );
@@ -97,7 +99,9 @@ export function readEpisodeHistoryByIdsFromSqlite(input: {
   for (const id of request.episodeIds) {
     const row = statement.get(id) as EpisodeHistoryReadRow | undefined;
     if (row === undefined) return [];
-    if (ceiling !== null && row.ended_at_utc > ceiling) return [];
+    const endedAtMs = Date.parse(row.ended_at_utc);
+    if (!Number.isFinite(endedAtMs)) return [];
+    if (ceilingMs !== null && endedAtMs > ceilingMs) return [];
     const hit = toHit(row);
     if (hit === null) return [];
     hits.push(hit);
