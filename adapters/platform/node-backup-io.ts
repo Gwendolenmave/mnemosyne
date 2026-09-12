@@ -23,7 +23,7 @@
  */
 
 import {
-  chmodSync, closeSync, copyFileSync, createReadStream, existsSync, mkdirSync,
+  chmodSync, closeSync, copyFileSync, createReadStream, existsSync, lstatSync, mkdirSync,
   openSync, readFileSync, readdirSync, readSync, renameSync, rmSync, statSync,
   writeFileSync,
 } from "node:fs";
@@ -38,6 +38,14 @@ import type {
 import type { ContinuityCensus } from "../../core/domain/backup-manifest.js";
 
 const sha256Hex = (b: Buffer | string): string => createHash("sha256").update(b).digest("hex");
+
+function attemptPath(destinationPath: string): string {
+  return `${destinationPath}.partial-${process.pid}-${randomBytes(6).toString("hex")}`;
+}
+
+function removeAttempt(path: string): void {
+  try { rmSync(path, { force: true }); } catch { /* preserve the primary failure */ }
+}
 
 // ---------------------------------------------------------------------------
 // Snapshot
@@ -69,35 +77,72 @@ export const nodeSnapshotPort: SnapshotPort = {
     if (existsSync(destinationPath)) {
       return { ok: false, failure: "destination_exists", detail: basename(destinationPath) };
     }
+
+    mkdirSync(dirname(destinationPath), { recursive: true });
+    const tmp = attemptPath(destinationPath);
     let db: DatabaseSync | undefined;
+    let sourceError: unknown = null;
     try {
-      mkdirSync(dirname(destinationPath), { recursive: true });
       // Read-only on the SOURCE: a backup must never be able to modify what it
       // is copying, not even by triggering a WAL checkpoint on close.
       db = new DatabaseSync(sourcePath, { readOnly: true });
-      db.prepare("VACUUM INTO ?").run(destinationPath);
+      db.prepare("VACUUM INTO ?").run(tmp);
     } catch (e) {
-      return { ok: false, failure: "source_unreadable", detail: String((e as Error).message ?? e) };
+      sourceError = e;
     } finally {
       try { db?.close(); } catch { /* the source is read-only; nothing to salvage */ }
     }
-    // The copy must pass its OWN integrity check. A snapshot that is only ever
-    // compared against the file it came from cannot detect a torn page.
+    if (sourceError !== null) {
+      removeAttempt(tmp);
+      return {
+        ok: false,
+        failure: "source_unreadable",
+        detail: String((sourceError as Error).message ?? sourceError),
+      };
+    }
+
+    // The candidate copy must pass its OWN integrity check before the public
+    // destination exists. A failed/crashed attempt therefore cannot wedge a
+    // later retry or leave a corrupt file looking like a completed snapshot.
     let copy: DatabaseSync | undefined;
+    let verdict = "missing";
+    let copyError: unknown = null;
     try {
-      copy = new DatabaseSync(destinationPath, { readOnly: true });
+      copy = new DatabaseSync(tmp, { readOnly: true });
       const row = copy.prepare("PRAGMA integrity_check").get() as { integrity_check?: string } | undefined;
-      const verdict = row?.integrity_check ?? "missing";
-      if (verdict !== "ok") {
-        return { ok: false, failure: "integrity_check_failed", detail: verdict };
-      }
+      verdict = row?.integrity_check ?? "missing";
     } catch (e) {
-      return { ok: false, failure: "inconsistent_copy", detail: String((e as Error).message ?? e) };
+      copyError = e;
     } finally {
       try { copy?.close(); } catch { /* ignore */ }
     }
-    const { bytes, sha256 } = hashFile(destinationPath);
-    return { ok: true, bytes, sha256 };
+    if (copyError !== null) {
+      removeAttempt(tmp);
+      return {
+        ok: false,
+        failure: "inconsistent_copy",
+        detail: String((copyError as Error).message ?? copyError),
+      };
+    }
+    if (verdict !== "ok") {
+      removeAttempt(tmp);
+      return { ok: false, failure: "integrity_check_failed", detail: verdict };
+    }
+
+    try {
+      const result = hashFile(tmp);
+      // Recheck just before publication so an already completed backup is never
+      // deliberately clobbered by a retry.
+      if (existsSync(destinationPath)) {
+        removeAttempt(tmp);
+        return { ok: false, failure: "destination_exists", detail: basename(destinationPath) };
+      }
+      renameSync(tmp, destinationPath);
+      return { ok: true, ...result };
+    } catch (e) {
+      removeAttempt(tmp);
+      return { ok: false, failure: "destination_unwritable", detail: String((e as Error).message ?? e) };
+    }
   },
 
   fileCopy(sourcePath, destinationPath, options): SnapshotResult {
@@ -153,6 +198,68 @@ function containedEntryPath(rel: string): boolean {
   const s = rel.replace(/\\/g, "/");
   if (s.startsWith("/") || /^[A-Za-z]:/.test(s)) return false;
   return !s.split("/").some((seg) => seg === "" || seg === "." || seg === "..");
+}
+
+type RestoreDestination =
+  | { readonly ok: true; readonly path: string }
+  | {
+      readonly ok: false;
+      readonly failure: "entry_path_escapes_package" | "destination_exists" | "io_failed";
+      readonly detail: string;
+    };
+
+/**
+ * Prepare one extraction destination without following pre-existing symlinks.
+ *
+ * Archive entry syntax alone is not enough: a lexical `sub/file` escapes if the
+ * restore tree already contains `sub -> /somewhere/else`. Missing directories
+ * are created one segment at a time only after their parent has been checked.
+ * Existing final paths are refused rather than followed/clobbered, which also
+ * prevents writes through a pre-existing hard link.
+ */
+function prepareRestoreDestination(destinationDir: string, rel: string): RestoreDestination {
+  const root = resolve(destinationDir);
+  try {
+    if (!existsSync(root)) {
+      mkdirSync(root, { recursive: true, mode: 0o700 });
+    }
+    const rootStat = lstatSync(root);
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory()) {
+      return { ok: false, failure: "entry_path_escapes_package", detail: "restore_root_not_plain_directory" };
+    }
+
+    const parts = rel.replace(/\\/g, "/").split("/");
+    let parent = root;
+    for (const part of parts.slice(0, -1)) {
+      const next = join(parent, part);
+      if (existsSync(next)) {
+        const st = lstatSync(next);
+        if (st.isSymbolicLink()) {
+          return { ok: false, failure: "entry_path_escapes_package", detail: rel };
+        }
+        if (!st.isDirectory()) {
+          return { ok: false, failure: "io_failed", detail: `restore parent is not a directory: ${part}` };
+        }
+      } else {
+        // Parent was just verified. Non-recursive creation avoids traversing an
+        // attacker-controlled child path if another object appears concurrently.
+        mkdirSync(next, { mode: 0o700 });
+      }
+      parent = next;
+    }
+
+    const dst = join(parent, parts[parts.length - 1]!);
+    const lexical = resolve(dst);
+    if (lexical !== root && !lexical.startsWith(root + sep)) {
+      return { ok: false, failure: "entry_path_escapes_package", detail: rel };
+    }
+    if (existsSync(dst)) {
+      return { ok: false, failure: "destination_exists", detail: rel };
+    }
+    return { ok: true, path: dst };
+  } catch (e) {
+    return { ok: false, failure: "io_failed", detail: String((e as Error).message ?? e) };
+  }
 }
 
 /**
@@ -266,7 +373,7 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
       // a fixed `.partial` pathname. The current attempt cleans up its own file on
       // any caught failure, while the final rename keeps the published package
       // atomic for readers.
-      const tmp = `${destinationPath}.partial-${process.pid}-${randomBytes(6).toString("hex")}`;
+      const tmp = attemptPath(destinationPath);
       try {
         const { plaintext, entries } = encodeEntries(stagingDir, entryPaths);
         const compressed = deflateRawSync(plaintext, { level: 6 });
@@ -290,7 +397,7 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
           },
         };
       } catch (e) {
-        try { rmSync(tmp, { force: true }); } catch { /* preserve the original I/O failure */ }
+        removeAttempt(tmp);
         return { ok: false, failure: "io_failed", detail: String((e as Error).message ?? e) };
       }
     },
@@ -334,18 +441,30 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
           detail: decoded,
         };
       }
+
+      // Resolve all destinations before writing any payload byte. This prevents
+      // a pre-existing symlink/hard-link target from turning an otherwise valid
+      // archive pathname into an out-of-root or destructive write.
+      const destinations: string[] = [];
+      for (const e of decoded) {
+        const prepared = prepareRestoreDestination(destinationDir, e.entryPath);
+        if (!prepared.ok) return prepared;
+        destinations.push(prepared.path);
+      }
+
       try {
         let off = 0;
-        for (const e of decoded) {
+        for (let index = 0; index < decoded.length; index += 1) {
+          const e = decoded[index]!;
           // Re-walk the plaintext in the same order to recover the bytes.
           off += 4;
           const pathLen = Buffer.byteLength(e.entryPath, "utf8");
           off += pathLen + 8;
           const data = plain.subarray(off, off + e.bytes);
           off += e.bytes;
-          const dst = join(destinationDir, e.entryPath);
-          mkdirSync(dirname(dst), { recursive: true });
-          writeFileSync(dst, data, { mode: 0o600 });
+          // Exclusive creation preserves the preflight's no-clobber contract if
+          // a path appears between validation and the actual write.
+          writeFileSync(destinations[index]!, data, { mode: 0o600, flag: "wx" });
         }
       } catch (err) {
         return { ok: false, failure: "io_failed", detail: String((err as Error).message ?? err) };
