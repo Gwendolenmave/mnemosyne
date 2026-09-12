@@ -112,7 +112,7 @@ export function searchEpisodeHistoryFromSqlite(input: {
   const conditions = ["e.published_payload IS NOT NULL"];
   const params: Array<string | number> = [];
   if (ceiling !== null) {
-    conditions.push("e.ended_at_utc <= ?");
+    conditions.push("julianday(e.ended_at_utc) <= julianday(?)");
     params.push(ceiling);
   }
 
@@ -124,8 +124,8 @@ export function searchEpisodeHistoryFromSqlite(input: {
     params.push(expression);
   }
   const order = expression === null
-    ? "e.ended_at_utc DESC, e.episode_id ASC"
-    : "bm25(episodes_fts) ASC, e.ended_at_utc DESC, e.episode_id ASC";
+    ? "julianday(e.ended_at_utc) DESC, e.episode_id ASC"
+    : "bm25(episodes_fts) ASC, julianday(e.ended_at_utc) DESC, e.episode_id ASC";
 
   const rows = db
     .prepare(`SELECT ${COLUMNS} FROM ${from} WHERE ${conditions.join(" AND ")} ORDER BY ${order} LIMIT ?`)
