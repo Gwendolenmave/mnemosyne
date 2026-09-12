@@ -91,6 +91,42 @@ jobs:
           console.log(`PASS package manifest files=${files.length}`);
           NODE
 
+      - name: Build and smoke-test the packed consumer surface
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/mnemosyne-consumer /tmp/mnemosyne-package-audit
+          npm pack --json > /tmp/mnemosyne-pack.json
+          TARBALL="$(node -e "const r=require('/tmp/mnemosyne-pack.json'); if(!Array.isArray(r)||r.length!==1||!r[0].filename) process.exit(2); process.stdout.write(r[0].filename)")"
+          TARBALL_PATH="$PWD/$TARBALL"
+          test -f "$TARBALL_PATH"
+
+          mkdir -p /tmp/mnemosyne-package-audit
+          tar -xzf "$TARBALL_PATH" -C /tmp/mnemosyne-package-audit
+          python3 scripts/scan.py /tmp/mnemosyne-package-audit/package
+
+          mkdir -p /tmp/mnemosyne-consumer
+          cd /tmp/mnemosyne-consumer
+          npm init -y >/dev/null
+          npm install "$TARBALL_PATH" --ignore-scripts --no-audit --no-fund >/dev/null
+          node --input-type=module <<'NODE'
+          const root = await import('@delos/mnemosyne');
+          const requiredRoot = [
+            'MemoryDomain', 'Governance', 'Curation', 'Retention', 'Anamnesis',
+            'EpisodeHistory', 'EpisodeHistoryRead', 'EpisodeAdjacency',
+            'EpisodeRecallSession', 'EpisodeRecallAudit'
+          ];
+          for (const name of requiredRoot) {
+            if (!(name in root)) throw new Error(`packed root export missing ${name}`);
+          }
+          const core = await import('@delos/mnemosyne/core/services/episode-history');
+          if (Object.keys(core).length === 0) throw new Error('packed core subpath resolved to an empty module');
+          const adapter = await import('@delos/mnemosyne/adapters/projections/sqlite/episode-history-source');
+          if (Object.keys(adapter).length === 0) throw new Error('packed adapter subpath resolved to an empty module');
+          console.log('PASS packed consumer imports');
+          NODE
+
       - name: Checkout full public history at exact head
         uses: actions/checkout@v4
         with:
