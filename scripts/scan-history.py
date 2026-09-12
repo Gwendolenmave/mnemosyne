@@ -8,7 +8,6 @@ a shallow clone cannot truthfully establish that public Git history is clean.
 from __future__ import annotations
 
 import argparse
-import re
 import subprocess
 import sys
 from pathlib import PurePosixPath
@@ -19,6 +18,7 @@ from scan import (
     FORBIDDEN_SUFFIXES,
     allow_categories,
     allow_file_categories,
+    category_is_exemptible,
     load_private_patterns,
 )
 
@@ -103,8 +103,7 @@ def main() -> int:
             for number, line in enumerate(text.splitlines(), 1):
                 allowed = allow_categories(line) | file_allowed
                 for pattern_category, pattern in patterns:
-                    base = pattern_category.split(":", 1)[0].casefold()
-                    if pattern_category.casefold() in allowed or base in allowed:
+                    if category_is_exemptible(pattern_category, allowed):
                         continue
                     if pattern.search(line):
                         findings.append(

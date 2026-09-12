@@ -99,7 +99,12 @@ def allow_categories(line: str) -> set[str]:
 
 
 def allow_file_categories(text: str) -> set[str]:
-    """Return categories explicitly declared public for one whole text file."""
+    """Return generic categories explicitly declared public for one whole text file.
+
+    Owner-private pattern categories are intentionally not trusted here. A file
+    being scanned must never be able to declare a private literal public and
+    thereby disable the owner-only publication gate.
+    """
     marker = "scan:allow-file"
     allowed: set[str] = set()
     for line in text.splitlines():
@@ -108,6 +113,15 @@ def allow_file_categories(text: str) -> set[str]:
         tail = line.split(marker, 1)[1].split("-->", 1)[0].split("*/", 1)[0]
         allowed.update(token.strip().casefold() for token in re.split(r"[,\s]+", tail) if token.strip())
     return allowed
+
+
+def category_is_exemptible(category: str, allowed: set[str]) -> bool:
+    """Apply source-controlled exemptions only to generic public categories."""
+    normalized = category.casefold()
+    if normalized.startswith("private:"):
+        return False
+    base = normalized.split(":", 1)[0]
+    return normalized in allowed or base in allowed
 
 
 def display_path(root: Path, path: Path) -> str:
@@ -174,8 +188,7 @@ def scan_text(
     for number, line in enumerate(text.splitlines(), 1):
         allowed = allow_categories(line) | file_allowed
         for category, pattern in patterns:
-            base_category = category.split(":", 1)[0].casefold()
-            if category.casefold() in allowed or base_category in allowed:
+            if category_is_exemptible(category, allowed):
                 continue
             match = pattern.search(line)
             if match:
@@ -221,8 +234,8 @@ def main() -> int:
             location = f"{finding.path}:{finding.line}" if finding.line else finding.path
             print(f"{finding.category}\t{location}\t{finding.detail}")
         print(
-            f"{report['status']} files={report['files']} bytes={report['bytes']} "
-            f"private_patterns={report['private_patterns']} findings={len(findings)}"
+            f"{report['status']} files={report['files']} bytes={byte_count} "
+            f"private_patterns={len(private_patterns)} findings={len(findings)}"
         )
     return 1 if findings else 0
 

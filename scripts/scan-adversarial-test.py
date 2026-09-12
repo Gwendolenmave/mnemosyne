@@ -54,18 +54,45 @@ def main() -> int:
         result = run(clean, patterns)
         require(result.returncode == 1 and "private:principal" in result.stdout, "unrelated exemption must not hide leak", result)
 
+        (clean / "leak.txt").write_text(private_value + " # scan:allow private:principal\n", encoding="utf-8")
+        result = run(clean, patterns)
+        require(
+            result.returncode == 1 and "private:principal" in result.stdout,
+            "line-level exemption must never hide an owner-private literal",
+            result,
+        )
+
         (clean / "leak.txt").write_text(
             "<!-- scan:allow-file private:principal -->\n" + private_value + "\n",
             encoding="utf-8",
         )
         result = run(clean, patterns)
-        require(result.returncode == 0, "explicit file-level public category must pass", result)
+        require(
+            result.returncode == 1 and "private:principal" in result.stdout,
+            "file-level exact exemption must never hide an owner-private literal",
+            result,
+        )
+
+        (clean / "leak.txt").write_text(
+            "<!-- scan:allow-file private -->\n" + private_value + "\n",
+            encoding="utf-8",
+        )
+        result = run(clean, patterns)
+        require(
+            result.returncode == 1 and "private:principal" in result.stdout,
+            "file-level base-category exemption must never hide an owner-private literal",
+            result,
+        )
 
         (clean / "leak.txt").unlink()
         secret = "sk-" + "A" * 32
         (clean / "secret.txt").write_text(secret + "\n", encoding="utf-8")
         result = run(clean)
         require(result.returncode == 1 and "secret" in result.stdout, "credential-shaped value must fail", result)
+
+        (clean / "secret.txt").write_text(secret + " # scan:allow secret\n", encoding="utf-8")
+        result = run(clean)
+        require(result.returncode == 0, "generic public scanner categories may still be explicitly exempted", result)
 
         (clean / "secret.txt").unlink()
         forbidden = clean / "data"
