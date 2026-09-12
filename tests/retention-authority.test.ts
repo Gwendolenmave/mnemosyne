@@ -3,6 +3,7 @@ import { test } from "node:test";
 import {
   dispatchPortableRetention,
   isPortableRetentionRequest,
+  replayPortableRetention,
   type PortableRetentionRequest,
 } from "../core/services/retention-authority.js";
 
@@ -122,4 +123,31 @@ test("correction uses a distinct governed repair lane and mixed correction evide
   assert.equal(mixed.reasonCode, "mixed_correction_evidence");
   assert.equal(mixed.longTermCandidateAdmissionAllowed, false);
   assert.equal(mixed.governedCorrectionAdmissionAllowed, false);
+});
+
+test("historical retention replay is deterministic and owns no writer", () => {
+  const input = request(["stable_preference"]);
+  const first = replayPortableRetention(input);
+  const second = replayPortableRetention(input);
+
+  assert.deepEqual(first, second);
+  assert.deepEqual(first.decision, dispatchPortableRetention(input));
+  assert.equal(first.writerCapabilityPresent, false);
+  assert.equal(first.writePerformed, false);
+  assert.equal(first.decision.writePerformed, false);
+  assert.notEqual(first.request, input);
+  assert.equal(Object.isFrozen(first), true);
+  assert.equal(Object.isFrozen(first.request), true);
+  assert.equal(Object.isFrozen(first.request?.evidenceCodes), true);
+});
+
+test("historical retention replay preserves fail-closed invalid-input evidence without copying it", () => {
+  const input = { schemaVersion: 1, evidenceCodes: ["unknown"], auId: null };
+  const receipt = replayPortableRetention(input);
+
+  assert.equal(receipt.request, null);
+  assert.equal(receipt.decision.destination, "quarantine");
+  assert.equal(receipt.decision.reasonCode, "invalid_request");
+  assert.equal(receipt.writerCapabilityPresent, false);
+  assert.equal(receipt.writePerformed, false);
 });
