@@ -23,9 +23,9 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Clear dedicated verification checkout
+      - name: Clear dedicated verification checkouts
         shell: bash
-        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_verify"
+        run: rm -rf "$GITHUB_WORKSPACE/_public_mnemosyne_verify" "$GITHUB_WORKSPACE/_public_mnemosyne_history"
 
       - name: Checkout exact head only
         uses: actions/checkout@v4
@@ -40,22 +40,77 @@ jobs:
         with:
           node-version-file: _public_mnemosyne_verify/.nvmrc
 
-      - name: Confirm isolated checkout
+      - name: Confirm isolated exact-head checkout
         shell: bash
         working-directory: _public_mnemosyne_verify
         run: |
           set -euo pipefail
           node --version
           npm --version
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(git rev-list --all --count)" -eq 1
+          test "$(git rev-parse --is-shallow-repository)" = "true"
 
       - name: Install locked dependencies
         working-directory: _public_mnemosyne_verify
         run: npm ci --ignore-scripts
 
-      - name: Run complete public verification
+      - name: Run exact-head source verification
         shell: bash
         working-directory: _public_mnemosyne_verify
         run: |
           set -euo pipefail
-          npm run verify
+          npm run verify:head
+
+      - name: Inspect package file manifest
+        shell: bash
+        working-directory: _public_mnemosyne_verify
+        run: |
+          set -euo pipefail
+          npm pack --dry-run --json > /tmp/mnemosyne-pack-manifest.json
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const report = JSON.parse(fs.readFileSync('/tmp/mnemosyne-pack-manifest.json', 'utf8'));
+          if (!Array.isArray(report) || report.length !== 1 || !Array.isArray(report[0].files)) {
+            throw new Error('unexpected npm pack manifest shape');
+          }
+          const files = report[0].files.map((entry) => entry.path);
+          const required = ['package.json', 'LICENSE.md', 'README.md', 'build/index.js', 'build/index.d.ts'];
+          for (const path of required) {
+            if (!files.includes(path)) throw new Error(`package manifest missing ${path}`);
+          }
+          const forbidden = files.filter((path) =>
+            path.startsWith('build/tests/') ||
+            /(^|\/)(data|logs|backups|receipts|secrets)(\/|$)/.test(path) ||
+            /(^|\/)\.env(?:\.|$)/.test(path) ||
+            /\.(?:db|sqlite|sqlite3|wal|shm|pem|key|p12|pfx|keystore|jsonl|ndjson)$/i.test(path)
+          );
+          if (forbidden.length !== 0) {
+            throw new Error(`forbidden package files: ${forbidden.join(', ')}`);
+          }
+          console.log(`PASS package manifest files=${files.length}`);
+          NODE
+
+      - name: Checkout full public history at exact head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: _public_mnemosyne_history
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Confirm full-history checkout
+        shell: bash
+        working-directory: _public_mnemosyne_history
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          test "$(git rev-list --all --count)" -gt 1
+
+      - name: Scan complete public Git history
+        shell: bash
+        working-directory: _public_mnemosyne_history
+        run: |
+          set -euo pipefail
+          python3 scripts/scan-history.py
