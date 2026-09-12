@@ -61,6 +61,22 @@ export interface PortableRetentionDecision {
   readonly writePerformed: false;
 }
 
+/**
+ * Writer-free receipt for historical retention replay.
+ *
+ * The replay surface deliberately exposes no writer, storage, backlog or
+ * projection capability. It records only the strict structured request and
+ * deterministic classification result so a host can re-run historical
+ * evidence without creating a second admission path.
+ */
+export interface PortableRetentionReplayReceipt {
+  readonly schemaVersion: typeof PORTABLE_RETENTION_SCHEMA_VERSION;
+  readonly request: PortableRetentionRequest | null;
+  readonly decision: PortableRetentionDecision;
+  readonly writerCapabilityPresent: false;
+  readonly writePerformed: false;
+}
+
 const EXACT_AU_ID = /^[a-z0-9][a-z0-9-]{0,63}$/u;
 const EVIDENCE_SET = new Set<string>(PORTABLE_RETENTION_EVIDENCE_CODES);
 const SHORT_SESSION = new Set<PortableRetentionEvidenceCode>([
@@ -165,4 +181,33 @@ export function dispatchPortableRetention(value: unknown): PortableRetentionDeci
   }
 
   return decision("quarantine", "invalid_request", false, false);
+}
+
+/**
+ * Re-run the portable retention classifier without acquiring any writer.
+ *
+ * Valid requests are copied into the receipt so callers can bind immutable
+ * replay evidence without retaining mutable caller-owned arrays. Invalid input
+ * is represented as a null request plus the normal fail-closed decision.
+ */
+export function replayPortableRetention(value: unknown): PortableRetentionReplayReceipt {
+  const valid = isPortableRetentionRequest(value);
+  const frozenRequest: PortableRetentionRequest | null = valid
+    ? Object.freeze({
+        schemaVersion: PORTABLE_RETENTION_SCHEMA_VERSION,
+        evidenceCodes: Object.freeze([...value.evidenceCodes]),
+        auId: value.auId,
+      })
+    : null;
+  const result = dispatchPortableRetention(value);
+  if (result.writePerformed !== false) {
+    throw new Error("portable retention replay violated the writer-free contract");
+  }
+  return Object.freeze({
+    schemaVersion: PORTABLE_RETENTION_SCHEMA_VERSION,
+    request: frozenRequest,
+    decision: result,
+    writerCapabilityPresent: false as const,
+    writePerformed: false as const,
+  });
 }
