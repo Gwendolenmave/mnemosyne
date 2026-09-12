@@ -59,7 +59,8 @@
     "scan": "python3 scripts/scan.py",
     "scan:adversarial": "python3 scripts/scan-adversarial-test.py",
     "scan:history": "python3 scripts/scan-history.py",
-    "verify": "npm run typecheck && npm test && npm run scan:adversarial && npm run scan && npm run scan:history"
+    "verify:head": "npm run typecheck && npm test && npm run scan:adversarial && npm run scan",
+    "verify": "npm run verify:head && npm run scan:history"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",
