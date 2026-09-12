@@ -79,6 +79,48 @@ test("adjacency honors a strict replay ceiling", () => {
   );
 });
 
+test("adjacency compares absolute instants across ISO offsets", () => {
+  const mixedRows = [
+    {
+      episodeId: anchor,
+      channel: "telegram",
+      thread: "conversation-alpha",
+      startedAtIso: "2026-09-01T10:00:00+08:00",
+      endedAtIso: "2026-09-01T10:10:00+08:00",
+      published: true,
+    },
+    {
+      episodeId: next1,
+      channel: "telegram",
+      thread: "conversation-alpha",
+      startedAtIso: "2026-09-01T03:00:00Z",
+      endedAtIso: "2026-09-01T03:10:00Z",
+      published: true,
+    },
+    {
+      episodeId: next2,
+      channel: "telegram",
+      thread: "conversation-alpha",
+      startedAtIso: "2026-09-01T04:00:00Z",
+      endedAtIso: "2026-09-01T04:10:00Z",
+      published: true,
+    },
+  ] as const;
+
+  assert.deepEqual(
+    selectAdjacentEpisodeIds({
+      request: {
+        anchorEpisodeId: anchor,
+        direction: "next",
+        availableBeforeIso: "2026-09-01T11:30:00+08:00",
+        limit: 3,
+      },
+      rows: mixedRows,
+    }),
+    [next1],
+  );
+});
+
 test("adjacency fails closed when a conversation witness disagrees", () => {
   assert.deepEqual(
     selectAdjacentEpisodeIds({
