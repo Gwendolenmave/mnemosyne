@@ -261,6 +261,12 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
       }
       const k = loadOrCreateKey(keyPath);
       if (!k.ok) return k;
+      // Each attempt owns a unique staging name. A crash may leave an orphaned
+      // partial, but that orphan can never wedge the next retry by colliding with
+      // a fixed `.partial` pathname. The current attempt cleans up its own file on
+      // any caught failure, while the final rename keeps the published package
+      // atomic for readers.
+      const tmp = `${destinationPath}.partial-${process.pid}-${randomBytes(6).toString("hex")}`;
       try {
         const { plaintext, entries } = encodeEntries(stagingDir, entryPaths);
         const compressed = deflateRawSync(plaintext, { level: 6 });
@@ -271,7 +277,6 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
         cipher.setAAD(MAGIC);
         const body = Buffer.concat([cipher.update(compressed), cipher.final()]);
         const tag = cipher.getAuthTag();
-        const tmp = destinationPath + ".partial";
         writeFileSync(tmp, Buffer.concat([MAGIC, iv, tag, body]), { mode: 0o600, flag: "wx" });
         // Rename last: a reader never sees a half-written package under its real
         // name, so "the file exists" and "the file is complete" are the same fact.
@@ -285,6 +290,7 @@ export function createNodeArchivePort(keyPath: string): ArchivePort {
           },
         };
       } catch (e) {
+        try { rmSync(tmp, { force: true }); } catch { /* preserve the original I/O failure */ }
         return { ok: false, failure: "io_failed", detail: String((e as Error).message ?? e) };
       }
     },
