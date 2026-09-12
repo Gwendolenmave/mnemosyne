@@ -39,6 +39,8 @@ export const EPISODE_RECALL_MAX_TIME_HINT_CODE_POINTS = 120;
 /** Default cumulative returned structured-payload ceiling for one recall turn. */
 export const EPISODE_RECALL_MAX_RETURNED_CODE_POINTS = 24_000;
 
+const SHA256_HEX = /^sha256:[0-9a-f]{64}$/;
+
 function codePointLength(value: string): number {
   return [...value].length;
 }
@@ -51,7 +53,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-function isValidReturnedHit(value: unknown): value is EpisodeHistoryHit {
+function isValidReturnedHit(value: unknown, availableBeforeIso: string | null): value is EpisodeHistoryHit {
   if (!isRecord(value)) return false;
   if (typeof value.episodeId !== "string" || !isEpisodeId(value.episodeId)) return false;
   if (typeof value.realm !== "string" || !isRealm(value.realm)) return false;
@@ -65,11 +67,15 @@ function isValidReturnedHit(value: unknown): value is EpisodeHistoryHit {
   if (typeof value.domain !== "string" || !isDomain(value.domain)) return false;
   if (typeof value.title !== "string") return false;
   if (typeof value.summary !== "string" || value.summary.length === 0) return false;
-  if (typeof value.startedAtIso !== "string" || !Number.isFinite(Date.parse(value.startedAtIso))) return false;
-  if (typeof value.endedAtIso !== "string" || !Number.isFinite(Date.parse(value.endedAtIso))) return false;
+  if (typeof value.startedAtIso !== "string" || typeof value.endedAtIso !== "string") return false;
+  const startedAtMs = Date.parse(value.startedAtIso);
+  const endedAtMs = Date.parse(value.endedAtIso);
+  if (!Number.isFinite(startedAtMs) || !Number.isFinite(endedAtMs)) return false;
+  if (endedAtMs < startedAtMs) return false;
+  if (availableBeforeIso !== null && endedAtMs > Date.parse(availableBeforeIso)) return false;
   if (typeof value.status !== "string" || !isEpisodeStatus(value.status)) return false;
   if (typeof value.sensitivity !== "string" || !isSensitivity(value.sensitivity)) return false;
-  if (typeof value.sourceHash !== "string" || value.sourceHash.trim().length === 0) return false;
+  if (typeof value.sourceHash !== "string" || !SHA256_HEX.test(value.sourceHash)) return false;
   return true;
 }
 
@@ -105,10 +111,11 @@ function isValidReturnedHit(value: unknown): value is EpisodeHistoryHit {
  * choose another positive safe-integer ceiling explicitly.
  *
  * Every source result is runtime-validated before budgeting or authorization:
- * realm/AU shape, domain, timestamps, lifecycle status, sensitivity, summary
- * presence and provenance hash must all satisfy the public Episode contract.
- * A malformed custom source therefore fails closed as execution_failed and can
- * never use TypeScript-only trust to widen same-turn read/adjacency authority.
+ * realm/AU shape, domain, ordered timestamps, replay ceiling, lifecycle status,
+ * sensitivity, summary presence and full SHA-256 provenance must all satisfy
+ * the public Episode contract. A malformed custom source therefore fails closed
+ * as execution_failed and can never use TypeScript-only trust to widen same-turn
+ * read/adjacency authority.
  *
  * The most recent operation also leaves a content-free decision receipt. It
  * distinguishes a genuine empty result from invalid input, attempt exhaustion,
@@ -283,7 +290,7 @@ export class TurnScopedEpisodeRecallSession {
     if (!Array.isArray(hits) || hits.length > limit) return false;
     const seen = new Set<string>();
     for (const hit of hits) {
-      if (!isValidReturnedHit(hit) || seen.has(hit.episodeId)) return false;
+      if (!isValidReturnedHit(hit, this.availableBeforeIso) || seen.has(hit.episodeId)) return false;
       seen.add(hit.episodeId);
     }
     return true;

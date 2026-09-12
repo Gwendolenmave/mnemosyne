@@ -36,9 +36,12 @@ test("search rejects malformed typed source hits before granting exact-read auth
     malformed({ summary: "" }),
     malformed({ startedAtIso: "not-a-time" }),
     malformed({ endedAtIso: "not-a-time" }),
+    malformed({ startedAtIso: "2026-09-01T10:20:00Z", endedAtIso: "2026-09-01T10:10:00Z" }),
     malformed({ status: "draft" }),
     malformed({ sensitivity: "secret" }),
     malformed({ sourceHash: "" }),
+    malformed({ sourceHash: "not-a-hash" }),
+    malformed({ sourceHash: `sha256:${"C".repeat(64)}` }),
   ];
 
   for (const badHit of badHits) {
@@ -55,6 +58,24 @@ test("search rejects malformed typed source hits before granting exact-read auth
     assert.deepEqual(session.read([episodeId]), []);
     assert.equal(readCalls, 0, "malformed search results must never authorize a later exact read");
   }
+});
+
+test("search rejects custom-source hits beyond the session replay ceiling without authorizing them", () => {
+  let readCalls = 0;
+  const session = new TurnScopedEpisodeRecallSession(
+    { search: () => [validHit()] },
+    { adjacent: () => [] },
+    { read: () => { readCalls += 1; return [validHit()]; } },
+    {
+      availableBeforeIso: "2026-09-01T10:05:00Z",
+      maxCallAttempts: 2,
+    },
+  );
+
+  assert.deepEqual(session.search({ query: "synthetic", limit: 1 }), []);
+  assert.deepEqual(session.lastDecision(), { status: "failed", reason: "execution_failed" });
+  assert.deepEqual(session.read([episodeId]), []);
+  assert.equal(readCalls, 0, "a replay-ceiling violation must not widen same-turn exact-read authority");
 });
 
 test("follow-up exact reads validate the full hit contract before widening adjacency authority", () => {
