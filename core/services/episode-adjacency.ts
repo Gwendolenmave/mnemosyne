@@ -29,8 +29,9 @@ export interface EpisodeAdjacencyRequest {
   limit: number;
 }
 
-function validIso(value: string): boolean {
-  return Number.isFinite(Date.parse(value));
+function parseInstant(value: string): number | null {
+  const instant = Date.parse(value);
+  return Number.isFinite(instant) ? instant : null;
 }
 
 /**
@@ -59,12 +60,19 @@ export function selectAdjacentEpisodeIds(input: {
   if (limit <= 0) return [];
 
   const ceiling = request.availableBeforeIso ?? null;
-  if (ceiling !== null && !validIso(ceiling)) return [];
+  const ceilingMs = ceiling === null ? null : parseInstant(ceiling);
+  if (ceiling !== null && ceilingMs === null) return [];
 
   const anchor = rows.find(
-    (row) => row.episodeId === request.anchorEpisodeId && row.published && validIso(row.startedAtIso) && validIso(row.endedAtIso),
+    (row) =>
+      row.episodeId === request.anchorEpisodeId &&
+      row.published &&
+      parseInstant(row.startedAtIso) !== null &&
+      parseInstant(row.endedAtIso) !== null,
   );
   if (anchor === undefined) return [];
+  const anchorStartedMs = parseInstant(anchor.startedAtIso);
+  if (anchorStartedMs === null) return [];
 
   const witnesses = input.witnesses ?? [];
   for (const witness of witnesses) {
@@ -73,21 +81,25 @@ export function selectAdjacentEpisodeIds(input: {
     }
   }
 
-  return rows
-    .filter((row) => {
-      if (!row.published || !isEpisodeId(row.episodeId)) return false;
-      if (row.episodeId === anchor.episodeId) return false;
-      if (row.channel !== anchor.channel || row.thread !== anchor.thread) return false;
-      if (!validIso(row.startedAtIso) || !validIso(row.endedAtIso)) return false;
-      if (row.startedAtIso <= anchor.startedAtIso) return false;
-      if (ceiling !== null && row.endedAtIso > ceiling) return false;
-      return true;
-    })
+  const candidates: Array<{ row: EpisodeAdjacencyRow; startedAtMs: number; endedAtMs: number }> = [];
+  for (const row of rows) {
+    if (!row.published || !isEpisodeId(row.episodeId)) continue;
+    if (row.episodeId === anchor.episodeId) continue;
+    if (row.channel !== anchor.channel || row.thread !== anchor.thread) continue;
+    const startedAtMs = parseInstant(row.startedAtIso);
+    const endedAtMs = parseInstant(row.endedAtIso);
+    if (startedAtMs === null || endedAtMs === null) continue;
+    if (startedAtMs <= anchorStartedMs) continue;
+    if (ceilingMs !== null && endedAtMs > ceilingMs) continue;
+    candidates.push({ row, startedAtMs, endedAtMs });
+  }
+
+  return candidates
     .sort((a, b) =>
-      a.startedAtIso.localeCompare(b.startedAtIso) ||
-      a.endedAtIso.localeCompare(b.endedAtIso) ||
-      a.episodeId.localeCompare(b.episodeId),
+      a.startedAtMs - b.startedAtMs ||
+      a.endedAtMs - b.endedAtMs ||
+      a.row.episodeId.localeCompare(b.row.episodeId),
     )
     .slice(0, limit)
-    .map((row) => row.episodeId);
+    .map(({ row }) => row.episodeId);
 }

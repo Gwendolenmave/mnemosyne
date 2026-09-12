@@ -108,6 +108,53 @@ test("empty lexical anchors fall back to recent published Episodes", () => {
   db.close();
 });
 
+test("recent-history fallback orders absolute instants across ISO offsets", () => {
+  const db = fixture();
+  const earlier = ep("a");
+  const later = ep("b");
+  insert(db, {
+    id: earlier, title: "Earlier offset", summary: "earlier offset event", sourceHash: hash("a"),
+    started: "2026-09-01T10:00:00+08:00", ended: "2026-09-01T10:10:00+08:00",
+  });
+  insert(db, {
+    id: later, title: "Later offset", summary: "later offset event", sourceHash: hash("b"),
+    started: "2026-09-01T02:20:00Z", ended: "2026-09-01T03:00:00Z",
+  });
+
+  assert.deepEqual(
+    searchEpisodeHistoryFromSqlite({ db, request: { query: "", limit: 1 } }).map((hit) => hit.episodeId),
+    [later],
+  );
+  db.close();
+});
+
+test("history replay ceilings compare absolute instants across ISO offsets", () => {
+  const db = fixture();
+  const eligible = ep("a");
+  const future = ep("b");
+  insert(db, {
+    id: eligible, title: "Eligible offset", summary: "offset boundary event", sourceHash: hash("a"),
+    started: "2026-09-01T02:00:00Z", ended: "2026-09-01T02:20:00Z",
+  });
+  insert(db, {
+    id: future, title: "Future offset", summary: "offset boundary event", sourceHash: hash("b"),
+    started: "2026-09-01T02:40:00Z", ended: "2026-09-01T03:00:00Z",
+  });
+
+  assert.deepEqual(
+    searchEpisodeHistoryFromSqlite({
+      db,
+      request: {
+        query: "offset boundary",
+        availableBeforeIso: "2026-09-01T10:30:00+08:00",
+        limit: 5,
+      },
+    }).map((hit) => hit.episodeId),
+    [eligible],
+  );
+  db.close();
+});
+
 test("stale or malformed published payloads fail closed", () => {
   const db = fixture();
   const stale = ep("c");

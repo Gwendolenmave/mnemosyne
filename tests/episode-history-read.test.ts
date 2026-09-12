@@ -82,6 +82,30 @@ test("unknown, duplicate, malformed, stale, and over-ceiling reads fail closed a
   db.close();
 });
 
+test("exact Episode replay ceilings compare absolute instants across ISO offsets", () => {
+  const db = fixture();
+  const future = ep("a");
+  insert(db, {
+    id: future,
+    title: "Future offset",
+    summary: "future offset summary",
+    sourceHash: hash("a"),
+    ended: "2026-09-01T03:00:00Z",
+  });
+
+  assert.deepEqual(
+    readEpisodeHistoryByIdsFromSqlite({
+      db,
+      request: {
+        episodeIds: [future],
+        availableBeforeIso: "2026-09-01T10:30:00+08:00",
+      },
+    }),
+    [],
+  );
+  db.close();
+});
+
 test("exact Episode read works under SQLite query_only", () => {
   const db = fixture();
   const a = ep("a");

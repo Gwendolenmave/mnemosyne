@@ -128,6 +128,39 @@ test("SQLite adjacency honors the replay ceiling", () => {
   db.close();
 });
 
+test("SQLite adjacency compares absolute instants across ISO offsets", () => {
+  const db = createDb();
+  addEpisode(db, {
+    id: anchor,
+    start: "2026-09-01T10:00:00+08:00",
+    end: "2026-09-01T10:10:00+08:00",
+  });
+  addEpisode(db, {
+    id: next1,
+    start: "2026-09-01T03:00:00Z",
+    end: "2026-09-01T03:10:00Z",
+  });
+  addEpisode(db, {
+    id: next2,
+    start: "2026-09-01T04:00:00Z",
+    end: "2026-09-01T04:10:00Z",
+  });
+
+  assert.deepEqual(
+    selectAdjacentEpisodeIdsFromSqlite({
+      db,
+      request: {
+        anchorEpisodeId: anchor,
+        direction: "next",
+        availableBeforeIso: "2026-09-01T11:30:00+08:00",
+        limit: 3,
+      },
+    }),
+    [next1],
+  );
+  db.close();
+});
+
 test("SQLite adjacency fails closed when the anchor witness disagrees", () => {
   const db = createDb();
   seed(db);
