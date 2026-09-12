@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Scan every Git blob reachable from every local commit."""
+"""Scan every Git blob reachable from every local commit.
+
+This scanner is a publication gate. It must run from a full-history checkout;
+a shallow clone cannot truthfully establish that public Git history is clean.
+"""
 
 from __future__ import annotations
 
@@ -51,6 +55,14 @@ def main() -> int:
     parser.add_argument("--private-pattern-file")
     args = parser.parse_args()
     try:
+        shallow = str(git("rev-parse", "--is-shallow-repository")).strip().casefold()
+        if shallow != "false":
+            print(
+                "ERROR scan-history requires a full-history checkout; "
+                f"git reports shallow={shallow or '<unknown>'}",
+                file=sys.stderr,
+            )
+            return 2
         private = load_private_patterns(args.private_pattern_file)
         commits = [line for line in str(git("rev-list", "--all")).splitlines() if line]
     except (RuntimeError, ValueError) as exc:
