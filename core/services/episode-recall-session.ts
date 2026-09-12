@@ -1,4 +1,10 @@
-import { isEpisodeId } from "../domain/episode.js";
+import {
+  isDomain,
+  isEpisodeId,
+  isEpisodeStatus,
+  isRealm,
+  isSensitivity,
+} from "../domain/episode.js";
 import type { EpisodeAdjacentIdSource } from "./episode-followup-session.js";
 import type { EpisodeHistoryHit, EpisodeHistorySource } from "./episode-history.js";
 import type { EpisodeHistoryReadSource } from "./episode-history-read.js";
@@ -41,6 +47,32 @@ function returnedPayloadCodePoints(hits: readonly EpisodeHistoryHit[]): number {
   return codePointLength(JSON.stringify(hits));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function isValidReturnedHit(value: unknown): value is EpisodeHistoryHit {
+  if (!isRecord(value)) return false;
+  if (typeof value.episodeId !== "string" || !isEpisodeId(value.episodeId)) return false;
+  if (typeof value.realm !== "string" || !isRealm(value.realm)) return false;
+  if (
+    value.realm === "au"
+      ? typeof value.auId !== "string" || value.auId.trim().length === 0
+      : value.auId !== null
+  ) {
+    return false;
+  }
+  if (typeof value.domain !== "string" || !isDomain(value.domain)) return false;
+  if (typeof value.title !== "string") return false;
+  if (typeof value.summary !== "string" || value.summary.length === 0) return false;
+  if (typeof value.startedAtIso !== "string" || !Number.isFinite(Date.parse(value.startedAtIso))) return false;
+  if (typeof value.endedAtIso !== "string" || !Number.isFinite(Date.parse(value.endedAtIso))) return false;
+  if (typeof value.status !== "string" || !isEpisodeStatus(value.status)) return false;
+  if (typeof value.sensitivity !== "string" || !isSensitivity(value.sensitivity)) return false;
+  if (typeof value.sourceHash !== "string" || value.sourceHash.trim().length === 0) return false;
+  return true;
+}
+
 /**
  * Public-safe turn-scoped composition of Episode search, deterministic
  * adjacency and exact read.
@@ -71,6 +103,12 @@ function returnedPayloadCodePoints(hits: readonly EpisodeHistoryHit[]): number {
  * visible text all count. A result that would exceed the remaining budget is
  * discarded wholesale and grants no new same-turn authorization. Hosts may
  * choose another positive safe-integer ceiling explicitly.
+ *
+ * Every source result is runtime-validated before budgeting or authorization:
+ * realm/AU shape, domain, timestamps, lifecycle status, sensitivity, summary
+ * presence and provenance hash must all satisfy the public Episode contract.
+ * A malformed custom source therefore fails closed as execution_failed and can
+ * never use TypeScript-only trust to widen same-turn read/adjacency authority.
  *
  * The most recent operation also leaves a content-free decision receipt. It
  * distinguishes a genuine empty result from invalid input, attempt exhaustion,
@@ -245,9 +283,7 @@ export class TurnScopedEpisodeRecallSession {
     if (!Array.isArray(hits) || hits.length > limit) return false;
     const seen = new Set<string>();
     for (const hit of hits) {
-      if (hit === null || typeof hit !== "object" || !isEpisodeId(hit.episodeId) || seen.has(hit.episodeId)) {
-        return false;
-      }
+      if (!isValidReturnedHit(hit) || seen.has(hit.episodeId)) return false;
       seen.add(hit.episodeId);
     }
     return true;
